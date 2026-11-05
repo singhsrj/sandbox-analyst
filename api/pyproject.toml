@@ -4,9 +4,15 @@ version = "0.1.0"
 description = "FastAPI backend and Deep Agent for SandboxAnalyst"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    "deepagents>=0.6.12",
     "fastapi>=0.162.0",
+    "langchain-e2b>=0.0.6",
+    "langchain-openai>=1.7.4",
+    "langfuse>=5.2.0",
+    "langgraph-checkpoint-postgres>=3.2.0",
     "psycopg[binary]>=3.3.8",
     "pydantic-settings>=2.16.2",
+    "sqlglot>=30.29.0",
     "uvicorn[standard]>=0.54.0",
 ]
 

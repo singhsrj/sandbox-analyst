@@ -1,0 +1,4 @@
+{
+  "_comment": "USD per 1,000,000 tokens, keyed by exact model id, e.g. \"openai.gpt-oss-120b\": {\"input\": 0.0, \"output\": 0.0}. Fill from https://aws.amazon.com/bedrock/pricing/ for YOUR region (ap-south-1) and note the date. Left empty on purpose: unverified prices must not be invented. While a model has no entry, cost is reported as unknown and only the token budget is enforced.",
+  "prices_per_million_usd": {}
+}

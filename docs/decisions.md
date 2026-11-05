@@ -44,3 +44,28 @@ Short ADRs. Each: context → decision → consequences. Newest at the bottom.
 
 ## ADR-010: Admin role is `neondb_owner`; Neon's `app_role` is left alone
 - **Decision:** `neondb_owner` is the admin (migrations, seeding) instead of creating a separate `app_admin`. We create `analyst_ro` and `app_rw` ourselves (`db/provision.py`). The pre-existing `app_role` (created by Neon's setup, has CREATEROLE) and the `neon_auth` schema are unused and untouched; neither is reachable from our two roles.
+
+## ADR-011: Bedrock through its OpenAI-compatible endpoint only (supersedes part of ADR-001)
+- **Context:** The endpoint `https://bedrock-mantle.<region>.api.aws/v1` served 41 models in ap-south-1 on 2026-11-05 (gpt-oss, Qwen3, DeepSeek, Mistral, Kimi, GLM, MiniMax and more), and 9 of 10 candidates handled a tool-call round trip.
+- **Decision:** One provider path (`bedrock-openai`, plus `groq`/`ollama` for dev) built on `ChatOpenAI`. The `bedrock-converse` option is dropped. The standard `OPENAI_API_KEY` / `OPENAI_BASE_URL` names are used because that is what the OpenAI SDK reads. Claude models appear in the list but remain excluded (AWS Marketplace billing, ADR-001).
+- **Consequences:** Models are swapped with `--model` / `MODEL`. Prices are unverified, so cost is reported as unknown until `model_prices.json` is filled from the AWS pricing page.
+
+## ADR-012: Sandbox = E2B `code-interpreter-v1`, internet off
+- **Decision:** Every sandbox is created with `allow_internet_access=False`, no `envs`, a lifetime timeout and a per-command timeout. The `code-interpreter-v1` template already contains pandas/matplotlib/numpy/scipy, so nothing needs the network. Verified live (see docs/m2-findings.md) and covered by an integration test.
+- **Consequences:** Model-written code cannot exfiltrate data or install packages. The sandbox is created eagerly per run in M2 and lazily in M3.
+
+## ADR-013: Deliverables are collected by code, not by the model's good behaviour
+- **Context:** The model wrote "chart.png (exported)" without exporting it; prompting did not fix that.
+- **Decision:** At the end of a run, every file under `/home/user/outputs/` is copied to the artifact store. The answer is scanned for chart/report file names and any that were not delivered are recorded as `unverified_file_claims`. `export_artifact` remains for files elsewhere.
+- **Consequences:** The failure class is removed instead of hoped away, and the residual risk is measured.
+
+## ADR-014: Limits are in model calls and tokens; cost only when a price is verified
+- **Decision:** `MAX_AGENT_STEPS` is the number of model calls (enforced in `UsageTracker`); LangGraph's recursion limit is a generous backstop because it counts super-steps. `MAX_TOKENS_PER_REQUEST` stops runaway spend even when cost is unknown. Cost is computed only when every model used has an entry in `model_prices.json`; otherwise it is `null`, never a guess.
+
+## ADR-015: Compatibility shim for langchain-e2b 0.0.6
+- **Decision:** `SafeAsyncE2BSandbox` supplies the `_map_edit_error` method that langchain-e2b calls but deepagents 0.6.x no longer provides as a method. A test fails when upstream fixes it, so the shim gets deleted rather than forgotten.
+
+## ADR-016: Platform notes
+- Windows: psycopg async needs the selector event loop; `app/__init__.py` sets it (Linux production is unaffected).
+- Langfuse: read traces through `/api/public/v2/observations`; the v1 traces endpoint is removed on 2026-11-16.
+- Tests are hermetic: `tests/conftest.py` clears every settings variable from the environment; live tests skip when credentials are absent, so CI runs without secrets.

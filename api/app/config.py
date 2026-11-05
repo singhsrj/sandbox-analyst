@@ -13,17 +13,18 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Literal
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import AliasChoices, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
-ModelProvider = Literal["bedrock-openai", "bedrock-converse", "groq", "ollama"]
+ModelProvider = Literal["bedrock-openai", "groq", "ollama"]
 CsvList = Annotated[list[str], NoDecode]
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
+        populate_by_name=True,
         env_file=REPO_ROOT / ".env",
         env_file_encoding="utf-8",
         extra="ignore",
@@ -43,9 +44,15 @@ class Settings(BaseSettings):
     judge_provider: ModelProvider = "bedrock-openai"
     judge_model: str = "openai.gpt-oss-120b"
 
+    # Bedrock's OpenAI-compatible endpoint (https://bedrock-mantle.<region>.api.aws/v1). The
+    # standard OPENAI_* names are accepted because that is what the OpenAI SDK itself reads.
     aws_region: str = "ap-south-1"
-    bedrock_api_key: SecretStr | None = None
-    bedrock_openai_base_url: str | None = None
+    bedrock_api_key: SecretStr | None = Field(
+        default=None, validation_alias=AliasChoices("OPENAI_API_KEY", "BEDROCK_OPENAI_API_KEY")
+    )
+    bedrock_base_url: str | None = Field(
+        default=None, validation_alias=AliasChoices("OPENAI_BASE_URL", "BEDROCK_OPENAI_BASE_URL")
+    )
     groq_api_key: SecretStr | None = None
     ollama_base_url: str = "http://localhost:11434"
 
@@ -57,6 +64,10 @@ class Settings(BaseSettings):
     # --- sandbox (E2B) ---
     e2b_api_key: SecretStr | None = None
     sandbox_timeout_seconds: int = Field(default=600, ge=30, le=3600)
+    sandbox_template: str = "code-interpreter-v1"  # has pandas/matplotlib; no pip needed
+    sandbox_command_timeout_seconds: int = Field(default=120, ge=5, le=600)
+
+    artifacts_dir: Path = REPO_ROOT / "runs"  # sandbox deliverables + saved run records
 
     # --- observability (Langfuse) ---
     langfuse_public_key: SecretStr | None = None
@@ -69,11 +80,12 @@ class Settings(BaseSettings):
     session_token_ttl_minutes: int = Field(default=120, ge=5)
 
     # --- limits & budgets ---
-    max_agent_steps: int = Field(default=40, ge=1)
+    max_agent_steps: int = Field(default=40, ge=1)  # max MODEL CALLS per request
     sql_max_rows: int = Field(default=10_000, ge=1)
     sql_statement_timeout_ms: int = Field(default=15_000, ge=100)
     tool_preview_rows: int = Field(default=5, ge=1, le=50)
     max_tool_output_chars: int = Field(default=4_000, ge=200)
+    max_tokens_per_request: int = Field(default=300_000, ge=1_000)
     max_cost_usd_per_request: float = Field(default=0.10, gt=0)
     max_cost_usd_per_session: float = Field(default=0.50, gt=0)
     rate_limit_per_minute: int = Field(default=10, ge=1)

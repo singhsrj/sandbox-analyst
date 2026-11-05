@@ -2,7 +2,7 @@
 
 Ask a business question in plain English; a deep agent plans the work, runs **read-only SQL** against Postgres through a hardened tool, analyses the results in an **isolated E2B sandbox**, and returns a report with charts, the SQL used and its assumptions — with every step traced and evaluated.
 
-> Status: **M1 – database done** (M0 scaffolding, M1 Neon roles + seeded dataset). Results, demo link and architecture diagram will be added as they are measured/built. No numbers in this README are claimed until an eval run produces them.
+> Status: **M2 – agent core done** (M0 scaffolding, M1 Neon roles + seeded dataset, M2 CLI agent). Next: M3 streaming API. Results, demo link and architecture diagram will be added as they are measured/built. No numbers in this README are claimed until an eval run produces them.
 
 ## Quick start (backend)
 
@@ -24,6 +24,15 @@ uv run python -m db.seed         # deterministic synthetic data (~207k rows)
 ```
 
 See [docs/dataset.md](docs/dataset.md) for the planted insights. Integration tests in `api/tests/db/` try to write as `analyst_ro` and must fail; they are skipped when database credentials are absent.
+
+## Ask the agent (CLI)
+
+```bash
+uv run python -m app.cli "Why did revenue drop in March 2025, and which regions were affected?"
+uv run python -m app.cli --model qwen.qwen3-235b-a22b-2507 "Which category has the highest return rate?"
+```
+
+The agent plans, inspects the schema, runs read-only SQL (validated, then executed as `analyst_ro`), analyses the CSV in an isolated E2B sandbox (no internet, no secrets), writes a report with charts, and prints model, tokens, time and a Langfuse trace link. Files land in `runs/<thread>/` (git-ignored). See [docs/m2-findings.md](docs/m2-findings.md) for what was measured and which failure modes were seen.
 
 ## Checks
 

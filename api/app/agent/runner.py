@@ -1,0 +1,213 @@
+"""Run one question end to end and return a complete, serialisable record of what happened.
+
+M2 uses this from the CLI. M3 replaces the printing with the SSE streaming adapter, but the run
+record (question, steps, SQL, usage, trace id) is the same shape the replay mode and the eval
+harness will consume.
+"""
+
+from __future__ import annotations
+
+import json
+import time
+import uuid
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from typing import Any
+
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
+from langchain_core.runnables import RunnableConfig
+
+from app.agent.factory import build_agent
+from app.agent.models import get_model
+from app.agent.outputs import collect_outputs, unverified_file_claims
+from app.agent.usage import BudgetExceeded, StepLimitExceeded, UsageTracker
+from app.artifacts import ArtifactStore
+from app.config import ModelProvider, Settings
+from app.observability import make_handler, tracing_enabled
+from app.sandbox.manager import SandboxManager
+
+EventSink = Callable[[dict[str, Any]], None]
+
+MAX_EMPTY_NUDGES = 2
+EMPTY_REPLY_NUDGE = (
+    "Your last reply was empty. Continue the task: finish any remaining steps, export the "
+    "report and charts, then give your final answer containing the full report."
+)
+
+
+@dataclass
+class RunRecord:
+    thread_id: str
+    question: str
+    provider: str
+    model: str
+    started_at: str
+    status: str = "ok"  # ok | budget_exceeded | step_limit | error
+    empty_reply_nudges: int = (
+        0  # times the model ended its turn with nothing and was prompted again
+    )
+    error: str | None = None
+    final_answer: str = ""
+    final_message_meta: dict[str, Any] = field(
+        default_factory=dict
+    )  # diagnostics for empty answers
+    steps: list[dict[str, Any]] = field(default_factory=list)
+    sql: list[dict[str, Any]] = field(default_factory=list)
+    artifacts: list[dict[str, Any]] = field(default_factory=list)
+    unverified_file_claims: list[str] = field(
+        default_factory=list
+    )  # files the answer mentions but never delivered
+    usage: dict[str, Any] = field(default_factory=dict)
+    seconds: float = 0.0
+    trace_id: str | None = None
+    trace_url: str | None = None
+
+    def to_json(self) -> str:
+        return json.dumps(self.__dict__, indent=2, default=str)
+
+
+def _clip(value: Any, n: int = 600) -> str:
+    text = value if isinstance(value, str) else json.dumps(value, default=str)
+    return text if len(text) <= n else text[: n - 1] + "…"
+
+
+def _text(message: BaseMessage) -> str:
+    content = message.content
+    if isinstance(content, str):
+        return content
+    return "".join(p.get("text", "") if isinstance(p, dict) else str(p) for p in content)
+
+
+def _events_from_update(update: Any) -> list[dict[str, Any]]:
+    """Turn one LangGraph 'updates' chunk into plain step events."""
+    events: list[dict[str, Any]] = []
+    if not isinstance(update, dict):
+        return events
+    for node_update in update.values():
+        messages = node_update.get("messages") if isinstance(node_update, dict) else None
+        if not isinstance(messages, list):
+            continue
+        for message in messages:
+            if isinstance(message, AIMessage):
+                for call in message.tool_calls:
+                    events.append({"type": "tool_call", "name": call["name"], "args": call["args"]})
+                if message.content and not message.tool_calls:
+                    events.append({"type": "assistant", "text": _text(message)})
+            elif isinstance(message, ToolMessage):
+                events.append(
+                    {"type": "tool_result", "name": message.name, "text": _clip(_text(message))}
+                )
+    return events
+
+
+async def run_question(
+    question: str,
+    settings: Settings,
+    *,
+    provider: ModelProvider | None = None,
+    model: str | None = None,
+    thread_id: str | None = None,
+    on_event: EventSink | None = None,
+) -> RunRecord:
+    thread_id = thread_id or f"run-{uuid.uuid4().hex[:10]}"
+    provider = provider or settings.model_provider
+    model_id = model or settings.model
+    record = RunRecord(
+        thread_id=thread_id,
+        question=question,
+        provider=provider,
+        model=model_id,
+        started_at=datetime.now(UTC).isoformat(timespec="seconds"),
+    )
+    artifacts = ArtifactStore(settings.artifacts_dir, thread_id)
+    tracker = UsageTracker(
+        max_tokens=settings.max_tokens_per_request,
+        max_cost_usd=settings.max_cost_usd_per_request,
+        max_llm_calls=settings.max_agent_steps,
+    )
+    handler = make_handler(settings)
+    callbacks: list[Any] = [tracker] + ([handler] if handler else [])
+    config: RunnableConfig = {
+        "callbacks": callbacks,
+        # LangGraph counts graph super-steps (several per model call). The real limit is the
+        # model-call cap in UsageTracker; this is only a generous backstop.
+        "recursion_limit": settings.max_agent_steps * 6 + 20,
+        "configurable": {"thread_id": thread_id},
+        "metadata": {
+            "langfuse_session_id": thread_id,
+            "langfuse_tags": ["m2-cli", provider, model_id],
+            "model": model_id,
+            "provider": provider,
+        },
+        "run_name": "analyst-run",
+    }
+
+    started = time.monotonic()
+    async with SandboxManager(settings) as sandboxes:
+        try:
+            agent = await build_agent(
+                settings,
+                thread_id=thread_id,
+                sandboxes=sandboxes,
+                artifacts=artifacts,
+                sql_log=record.sql,
+                model=get_model(settings, provider=provider, model=model_id),
+            )
+            next_input: str = question
+            while True:
+                async for update in agent.astream(
+                    {"messages": [HumanMessage(next_input)]}, config, stream_mode="updates"
+                ):
+                    for event in _events_from_update(update):
+                        record.steps.append(event)
+                        if on_event:
+                            on_event(event)
+                state = await agent.aget_state(config)
+                messages = state.values.get("messages", [])
+                last_ai = next((m for m in reversed(messages) if isinstance(m, AIMessage)), None)
+                record.final_answer = _text(last_ai).strip() if last_ai else ""
+                # Open-weight models sometimes end a turn with an empty message. Nudge, but only
+                # a couple of times, and record it: it is a real failure mode worth measuring.
+                if record.final_answer or record.empty_reply_nudges >= MAX_EMPTY_NUDGES:
+                    break
+                record.empty_reply_nudges += 1
+                next_input = EMPTY_REPLY_NUDGE
+            if last_ai is not None:
+                record.final_message_meta = {
+                    "finish_reason": last_ai.response_metadata.get("finish_reason"),
+                    "n_tool_calls": len(last_ai.tool_calls),
+                    "extra_keys": sorted(last_ai.additional_kwargs),
+                    "content_type": type(last_ai.content).__name__,
+                    "total_messages": len(messages),
+                    "last_message_types": [type(m).__name__ for m in messages[-4:]],
+                }
+        except StepLimitExceeded as exc:
+            record.status, record.error = "step_limit", str(exc)
+        except BudgetExceeded as exc:
+            record.status, record.error = "budget_exceeded", str(exc)
+        except Exception as exc:  # report every failure in the record instead of losing the run
+            name = type(exc).__name__
+            record.status = "step_limit" if name == "GraphRecursionError" else "error"
+            record.error = f"{name}: {_clip(str(exc), 400)}"
+        # Deliver whatever the agent saved under /home/user/outputs/ (even after a failure).
+        await collect_outputs(sandboxes, thread_id, artifacts)
+
+    record.seconds = round(time.monotonic() - started, 1)
+    record.usage = tracker.summary.as_dict()
+    record.artifacts = [
+        {"name": a.name, "size": a.size, "mime": a.mime, "path": str(a.path)}
+        for a in artifacts.list()
+    ]
+    record.unverified_file_claims = unverified_file_claims(
+        record.final_answer, {a.name for a in artifacts.list()}
+    )
+    if handler is not None and tracing_enabled(settings):
+        from langfuse import get_client
+
+        client = get_client(public_key=settings.secret("langfuse_public_key"))
+        record.trace_id = handler.last_trace_id
+        client.flush()
+        if record.trace_id:
+            record.trace_url = client.get_trace_url(trace_id=record.trace_id)
+    return record
