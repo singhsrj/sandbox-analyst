@@ -36,3 +36,11 @@ Short ADRs. Each: context → decision → consequences. Newest at the bottom.
 
 ## ADR-008: Web app scaffolded in M4, not M0
 - **Decision:** `web/` is created in M4 with the then-current Next.js, shadcn/ui and AI Elements CLIs, so we don't scaffold twice. CI gets a `web` job then.
+
+## ADR-009: Neon pooler leaks session state; privileges are the guarantee
+- **Context:** The pooled (PgBouncer, transaction mode) connection reuses server connections between clients without resetting session state. A session-level `SET statement_timeout = '500ms'` in one test showed up in a later, unrelated connection. Separately, a session may override `default_transaction_read_only`.
+- **Decision:** (1) Safety rests on privileges: `analyst_ro` has `SELECT` on `analytics` only (tested: INSERT/UPDATE/DELETE/DDL all denied even after `SET default_transaction_read_only = off`). Role-level read-only/timeouts are defence in depth. (2) The SQL tool runs every query in an explicit transaction using `SET LOCAL` only, never session-level `SET`. (3) The validator rejects `SET`/`RESET`/`DO`/`COPY`/etc. (4) Integration tests `RESET ALL` before and after each test.
+- **Consequences:** No setting a model-written query could change can persist to another user of the pool or weaken the role.
+
+## ADR-010: Admin role is `neondb_owner`; Neon's `app_role` is left alone
+- **Decision:** `neondb_owner` is the admin (migrations, seeding) instead of creating a separate `app_admin`. We create `analyst_ro` and `app_rw` ourselves (`db/provision.py`). The pre-existing `app_role` (created by Neon's setup, has CREATEROLE) and the `neon_auth` schema are unused and untouched; neither is reachable from our two roles.

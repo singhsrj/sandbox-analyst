@@ -92,6 +92,12 @@ class Settings(BaseSettings):
             env_names = ", ".join(n.upper() for n in missing)
             raise RuntimeError(f"Missing required configuration: {env_names} (see .env.example)")
 
+    def secret(self, name: str) -> str:
+        """Return the plain value of a required secret setting (raises if it is missing)."""
+        self.require(name)
+        value = getattr(self, name)
+        return value.get_secret_value() if isinstance(value, SecretStr) else str(value)
+
 
 @lru_cache
 def get_settings() -> Settings:

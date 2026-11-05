@@ -5,6 +5,7 @@ description = "FastAPI backend and Deep Agent for SandboxAnalyst"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "fastapi>=0.162.0",
+    "psycopg[binary]>=3.3.8",
     "pydantic-settings>=2.16.2",
     "uvicorn[standard]>=0.54.0",
 ]
