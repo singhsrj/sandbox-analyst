@@ -1,0 +1,61 @@
+[project]
+name = "sandbox-analyst"
+version = "0.1.0"
+description = "SandboxAnalyst: a sandboxed data analyst agent (workspace root)"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = ["sandbox-analyst-api"]
+
+[tool.uv]
+# The root is only a workspace container; it is not built as a package.
+package = false
+
+[tool.uv.workspace]
+members = ["api"]
+
+[tool.uv.sources]
+sandbox-analyst-api = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "mypy>=2.4.1",
+    "pytest>=9.2.0",
+    "pytest-asyncio>=1.4.1.post1",
+    "ruff>=0.17.3",
+]
+
+# ---------- tooling (applies to the whole repo) ----------
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["web", ".venv"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W", "F",  # pycodestyle + pyflakes
+    "I",            # isort
+    "B",            # bugbear
+    "UP",           # pyupgrade
+    "S",            # bandit (security)
+    "ASYNC",        # async pitfalls
+    "RUF",
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+
+[tool.ruff.lint.per-file-ignores]
+"**/tests/**" = ["S101"]  # assert is fine in tests
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = ["pydantic.mypy"]
+files = ["api/app", "api/tests"]
+
+[tool.pytest.ini_options]
+testpaths = ["api/tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"

@@ -1,0 +1,6 @@
+# Normalise line endings (developed on Windows, deployed/CI on Linux)
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.gif binary
+*.mp4 binary
