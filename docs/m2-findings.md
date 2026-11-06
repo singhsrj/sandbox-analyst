@@ -27,6 +27,11 @@ Cost is **unknown**: no verified Bedrock price for ap-south-1 is configured
 Takeaway: every model that finished identified the right region and magnitude; none reliably
 found the exact outage window. That is the kind of difference the evals must score.
 
+**Correction (found in M4):** the Mistral row above says it came "closest" on timing, but its answer
+also states February 2025 revenue as **$606,271.04** and a 30.5% drop. The database says February
+was **$506,271.04**, so those figures are wrong even though the region is right. "Closest on timing"
+must not be read as "most accurate". Numeric correctness is exactly what the M6 scorers check.
+
 ## Failure modes observed (for the README failure analysis)
 
 1. **Empty final message** (gpt-oss-120b): the model ended a turn with no text and no tool call,

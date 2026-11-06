@@ -16,3 +16,7 @@ wheels/
 
 # Agent run records and exported artifacts
 runs/
+
+# Local dev logs
+*.log
+*.tmp

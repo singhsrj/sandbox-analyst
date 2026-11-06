@@ -34,6 +34,7 @@ from app.config import ModelProvider, Settings
 from app.db.app_store import AppStore, ThreadInfo
 from app.observability import finalize_trace, make_handler
 from app.sandbox.manager import SandboxManager
+from app.service.errors import describe_run_error
 from app.streaming.adapter import Chunk, UIStreamAdapter, coalesce
 
 logger = logging.getLogger(__name__)
@@ -179,7 +180,7 @@ class ChatService:
             status, error_text = "budget_exceeded", str(exc)
         except Exception as exc:
             logger.exception("run failed thread=%s", thread_id)
-            status, error_text = "error", f"The run failed ({type(exc).__name__})."
+            status, error_text = "error", describe_run_error(exc)
 
         # --- always finish: deliver files, flush trace, persist the run ---
         tail = await asyncio.shield(

@@ -224,3 +224,21 @@ async def test_sandbox_id_is_remembered_for_reconnects(
 ) -> None:
     await collect(make_service(settings, store))
     assert store.sandbox_ids["thread-12345"] == "sbx-fake"
+
+
+async def test_run_summary_keys_match_what_the_frontend_and_its_fixture_expect(
+    settings: Settings, store: FakeStore, patched: dict[str, Any]
+) -> None:
+    """web/src/lib/types.ts (RunInfo) and scripts/dump_chunks.py (RUN_DATA) mirror these keys."""
+    import importlib.util
+    from pathlib import Path
+
+    chunks = await collect(make_service(settings, store))
+    run_data = next(c for c in chunks if c["type"] == "data-run")["data"]
+    script = Path(__file__).parents[3] / "scripts" / "dump_chunks.py"
+    spec = importlib.util.spec_from_file_location("dump_chunks", script)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert set(module.RUN_DATA) == set(run_data)
+    assert set(module.RUN_DATA["usage"]) == set(run_data["usage"]) - set()
