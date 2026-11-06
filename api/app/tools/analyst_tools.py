@@ -15,7 +15,7 @@ import re
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import psycopg
 from langchain_core.tools import BaseTool, tool
@@ -23,7 +23,6 @@ from langchain_core.tools import BaseTool, tool
 from app.artifacts import ArtifactError, ArtifactStore
 from app.config import Settings
 from app.db.analyst import QueryResult, fetch_catalog, run_readonly
-from app.sandbox.e2b_backend import SafeAsyncE2BSandbox
 from app.sandbox.manager import DATA_DIR, WORKDIR
 from app.security.sql_validator import (
     ANALYTICS_TABLES,
@@ -31,12 +30,15 @@ from app.security.sql_validator import (
     validate_select,
 )
 
+if TYPE_CHECKING:
+    from app.sandbox.e2b_backend import SafeAsyncE2BSandbox
+
 logger = logging.getLogger(__name__)
 
 _OUTPUT_FILE = re.compile(r"^[A-Za-z0-9_-]{1,60}\.csv$")
 _TABLE_NAME = re.compile(r"^[a-z_]{1,40}$")
 
-SandboxProvider = Callable[[], Awaitable[SafeAsyncE2BSandbox]]
+SandboxProvider = Callable[[], Awaitable["SafeAsyncE2BSandbox"]]
 
 
 @dataclass

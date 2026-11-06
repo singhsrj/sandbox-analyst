@@ -61,3 +61,10 @@ def test_tracker_propagates_errors_so_langchain_does_not_swallow_them() -> None:
 
 def test_shipped_price_table_has_no_invented_numbers() -> None:
     assert usage.load_prices() == {}
+
+
+def test_calls_that_report_no_usage_are_counted_not_hidden() -> None:
+    t = UsageTracker(max_tokens=100)
+    t._record("m", 10, 5)
+    t._record("m", 0, 0, reported=False)
+    assert t.summary.calls_without_usage == 1 and t.summary.as_dict()["calls_without_usage"] == 1

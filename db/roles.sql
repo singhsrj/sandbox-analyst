@@ -32,3 +32,7 @@ REVOKE ALL ON SCHEMA public FROM app_rw;
 GRANT CONNECT ON DATABASE neondb TO app_rw;
 GRANT ALL ON SCHEMA app TO app_rw;
 ALTER ROLE app_rw SET search_path = app;
+
+-- app_rw needs the application tables created by migrations (owned by the admin role).
+GRANT ALL ON ALL TABLES IN SCHEMA app TO app_rw;
+ALTER DEFAULT PRIVILEGES IN SCHEMA app GRANT ALL ON TABLES TO app_rw;

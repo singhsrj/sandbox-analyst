@@ -48,7 +48,7 @@ select = [
 known-first-party = ["app", "db"]
 
 [tool.ruff.lint.per-file-ignores]
-"**/tests/**" = ["S101", "E501"]  # assert and long SQL strings are fine in tests
+"**/tests/**" = ["S101", "S105", "S106", "E501"]  # asserts, fake secrets, long SQL are fine in tests
 "db/generate.py" = ["S311"]  # seeded PRNG for synthetic data; not security-sensitive
 
 [tool.mypy]

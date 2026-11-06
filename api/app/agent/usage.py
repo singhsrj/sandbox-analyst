@@ -51,6 +51,7 @@ class UsageSummary:
     output_tokens: int = 0
     models: list[str] = field(default_factory=list)
     cost_usd: float | None = None
+    calls_without_usage: int = 0  # model calls that reported no token usage (budget blind spot)
 
     @property
     def total_tokens(self) -> int:
@@ -64,6 +65,7 @@ class UsageSummary:
             "total_tokens": self.total_tokens,
             "models": self.models,
             "cost_usd": self.cost_usd,
+            "calls_without_usage": self.calls_without_usage,
         }
 
 
@@ -98,12 +100,19 @@ class UsageTracker(AsyncCallbackHandler):
                 meta = getattr(message, "response_metadata", None) or {}
                 model = str(meta.get("model_name") or meta.get("model") or "unknown")
                 self._record(
-                    model, int(usage.get("input_tokens", 0)), int(usage.get("output_tokens", 0))
+                    model,
+                    int(usage.get("input_tokens", 0)),
+                    int(usage.get("output_tokens", 0)),
+                    reported=bool(usage),
                 )
 
-    def _record(self, model: str, input_tokens: int, output_tokens: int) -> None:
+    def _record(
+        self, model: str, input_tokens: int, output_tokens: int, *, reported: bool = True
+    ) -> None:
         s = self.summary
         s.llm_calls += 1
+        if not reported:
+            s.calls_without_usage += 1
         s.input_tokens += input_tokens
         s.output_tokens += output_tokens
         if model not in s.models:

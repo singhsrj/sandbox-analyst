@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 
-from langfuse import Langfuse
+from langfuse import Langfuse, get_client
 from langfuse.langchain import CallbackHandler
 
 from app.config import Settings
@@ -35,3 +35,20 @@ def make_handler(settings: Settings) -> CallbackHandler | None:
     if init_langfuse(settings) is None:
         return None
     return CallbackHandler(public_key=settings.secret("langfuse_public_key"))
+
+
+def finalize_trace(
+    handler: CallbackHandler | None, settings: Settings
+) -> tuple[str | None, str | None]:
+    """Flush the trace and return `(trace_id, trace_url)`; both None when tracing is off."""
+    if handler is None or not tracing_enabled(settings):
+        return None, None
+    try:
+        client = get_client(public_key=settings.secret("langfuse_public_key"))
+        trace_id = handler.last_trace_id
+        client.flush()
+        url = client.get_trace_url(trace_id=trace_id) if trace_id else None
+        return trace_id, url
+    except Exception:  # tracing problems must never break a user's run
+        logger.exception("could not finalize Langfuse trace")
+        return None, None

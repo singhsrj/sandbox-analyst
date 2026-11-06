@@ -34,6 +34,9 @@ def get_model(
             api_key=SecretStr(settings.secret("bedrock_api_key")),
             base_url=_clean_url(settings.bedrock_base_url),
             temperature=0,
+            # Streamed responses carry no token usage unless asked. Without it the token budget
+            # and cost accounting silently see zero (found in M3 live testing).
+            stream_usage=True,
             timeout=120,
             max_retries=2,
         )
@@ -43,6 +46,9 @@ def get_model(
             api_key=SecretStr(settings.secret("groq_api_key")),
             base_url=GROQ_BASE_URL,
             temperature=0,
+            # Streamed responses carry no token usage unless asked. Without it the token budget
+            # and cost accounting silently see zero (found in M3 live testing).
+            stream_usage=True,
             timeout=120,
             max_retries=2,
         )
@@ -52,6 +58,9 @@ def get_model(
             api_key=SecretStr("ollama"),
             base_url=f"{settings.ollama_base_url.rstrip('/')}/v1",
             temperature=0,
+            # Streamed responses carry no token usage unless asked. Without it the token budget
+            # and cost accounting silently see zero (found in M3 live testing).
+            stream_usage=True,
             timeout=300,
             max_retries=0,
         )

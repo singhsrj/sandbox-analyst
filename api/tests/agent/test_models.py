@@ -5,10 +5,11 @@ from langchain_openai import ChatOpenAI
 
 from app.agent.models import GROQ_BASE_URL, get_model
 from app.config import Settings
+from tests.helpers import make_settings
 
 
 def make(**env: str) -> Settings:
-    return Settings(_env_file=None, **env)  # type: ignore[arg-type]
+    return make_settings(**env)
 
 
 def test_bedrock_uses_openai_compatible_endpoint_and_cleans_the_url() -> None:
@@ -33,3 +34,11 @@ def test_missing_credentials_fail_with_a_clear_message() -> None:
         get_model(make(OPENAI_API_KEY="k"))
     with pytest.raises(RuntimeError, match="GROQ_API_KEY"):
         get_model(make(MODEL_PROVIDER="groq"))
+
+
+def test_streamed_responses_request_token_usage_for_every_provider() -> None:
+    """Regression (M3): without stream_usage the budget and usage stats silently read zero."""
+    s = make(OPENAI_API_KEY="k", OPENAI_BASE_URL="https://x.example/v1", GROQ_API_KEY="g")
+    for provider in ("bedrock-openai", "groq", "ollama"):
+        model = get_model(s, provider=provider)
+        assert isinstance(model, ChatOpenAI) and model.stream_usage is True

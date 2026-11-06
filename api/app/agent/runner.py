@@ -15,25 +15,20 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
 
 from app.agent.factory import build_agent
+from app.agent.loop import AgentDriver
 from app.agent.models import get_model
 from app.agent.outputs import collect_outputs, unverified_file_claims
 from app.agent.usage import BudgetExceeded, StepLimitExceeded, UsageTracker
 from app.artifacts import ArtifactStore
 from app.config import ModelProvider, Settings
-from app.observability import make_handler, tracing_enabled
+from app.observability import finalize_trace, make_handler
 from app.sandbox.manager import SandboxManager
 
 EventSink = Callable[[dict[str, Any]], None]
-
-MAX_EMPTY_NUDGES = 2
-EMPTY_REPLY_NUDGE = (
-    "Your last reply was empty. Continue the task: finish any remaining steps, export the "
-    "report and charts, then give your final answer containing the full report."
-)
 
 
 @dataclass
@@ -44,9 +39,7 @@ class RunRecord:
     model: str
     started_at: str
     status: str = "ok"  # ok | budget_exceeded | step_limit | error
-    empty_reply_nudges: int = (
-        0  # times the model ended its turn with nothing and was prompted again
-    )
+    empty_reply_nudges: int = 0  # times the model ended its turn empty and was prompted again
     error: str | None = None
     final_answer: str = ""
     final_message_meta: dict[str, Any] = field(
@@ -55,9 +48,8 @@ class RunRecord:
     steps: list[dict[str, Any]] = field(default_factory=list)
     sql: list[dict[str, Any]] = field(default_factory=list)
     artifacts: list[dict[str, Any]] = field(default_factory=list)
-    unverified_file_claims: list[str] = field(
-        default_factory=list
-    )  # files the answer mentions but never delivered
+    # chart/report files the answer mentions that were never delivered
+    unverified_file_claims: list[str] = field(default_factory=list)
     usage: dict[str, Any] = field(default_factory=dict)
     seconds: float = 0.0
     trace_id: str | None = None
@@ -154,34 +146,17 @@ async def run_question(
                 sql_log=record.sql,
                 model=get_model(settings, provider=provider, model=model_id),
             )
-            next_input: str = question
-            while True:
-                async for update in agent.astream(
-                    {"messages": [HumanMessage(next_input)]}, config, stream_mode="updates"
-                ):
-                    for event in _events_from_update(update):
-                        record.steps.append(event)
-                        if on_event:
-                            on_event(event)
-                state = await agent.aget_state(config)
-                messages = state.values.get("messages", [])
-                last_ai = next((m for m in reversed(messages) if isinstance(m, AIMessage)), None)
-                record.final_answer = _text(last_ai).strip() if last_ai else ""
-                # Open-weight models sometimes end a turn with an empty message. Nudge, but only
-                # a couple of times, and record it: it is a real failure mode worth measuring.
-                if record.final_answer or record.empty_reply_nudges >= MAX_EMPTY_NUDGES:
-                    break
-                record.empty_reply_nudges += 1
-                next_input = EMPTY_REPLY_NUDGE
-            if last_ai is not None:
-                record.final_message_meta = {
-                    "finish_reason": last_ai.response_metadata.get("finish_reason"),
-                    "n_tool_calls": len(last_ai.tool_calls),
-                    "extra_keys": sorted(last_ai.additional_kwargs),
-                    "content_type": type(last_ai.content).__name__,
-                    "total_messages": len(messages),
-                    "last_message_types": [type(m).__name__ for m in messages[-4:]],
-                }
+            driver = AgentDriver(agent, config, question)
+            async for mode, payload in driver.events():
+                if mode != "updates":
+                    continue
+                for event in _events_from_update(payload):
+                    record.steps.append(event)
+                    if on_event:
+                        on_event(event)
+            record.final_answer = driver.final_answer
+            record.empty_reply_nudges = driver.nudges
+            record.final_message_meta = driver.final_message_meta
         except StepLimitExceeded as exc:
             record.status, record.error = "step_limit", str(exc)
         except BudgetExceeded as exc:
@@ -200,14 +175,7 @@ async def run_question(
         for a in artifacts.list()
     ]
     record.unverified_file_claims = unverified_file_claims(
-        record.final_answer, {a.name for a in artifacts.list()}
+        record.final_answer, artifacts.all_names()
     )
-    if handler is not None and tracing_enabled(settings):
-        from langfuse import get_client
-
-        client = get_client(public_key=settings.secret("langfuse_public_key"))
-        record.trace_id = handler.last_trace_id
-        client.flush()
-        if record.trace_id:
-            record.trace_url = client.get_trace_url(trace_id=record.trace_id)
+    record.trace_id, record.trace_url = finalize_trace(handler, settings)
     return record

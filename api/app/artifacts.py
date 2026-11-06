@@ -14,6 +14,7 @@ from pathlib import Path
 ALLOWED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".csv", ".md", ".txt", ".json"}  # no html/svg (XSS)
 MAX_ARTIFACT_BYTES = 10 * 1024 * 1024
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9._-]+")
+_SAFE_FILE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$")
 
 
 class ArtifactError(ValueError):
@@ -47,15 +48,34 @@ class ArtifactStore:
             )
         self._dir.mkdir(parents=True, exist_ok=True)
         target = self._dir / safe
-        target.write_bytes(data)
+        unchanged = target.is_file() and target.read_bytes() == data
+        if not unchanged:
+            target.write_bytes(data)
         artifact = Artifact(
             safe, target, len(data), mimetypes.guess_type(safe)[0] or "application/octet-stream"
         )
-        self._items[safe] = artifact
+        if not unchanged:  # files left over from earlier turns are not "new" deliverables
+            self._items[safe] = artifact
         return artifact
 
     def list(self) -> list[Artifact]:
+        """Files that are new or changed in this turn."""
         return list(self._items.values())
+
+    def all_names(self) -> set[str]:
+        """Every delivered file in this thread, including those from earlier turns."""
+        return {p.name for p in self._dir.iterdir() if p.is_file()} if self._dir.is_dir() else set()
+
+
+def artifact_path(root: Path, thread_id: str, name: str) -> Path | None:
+    """Path of a delivered artifact, or None. Rejects anything that is not a plain file name."""
+    if not _SAFE_FILE.match(name) or name != Path(name).name:
+        return None
+    directory = (root / _safe_part(thread_id) / "artifacts").resolve()
+    candidate = (directory / name).resolve()
+    if candidate.parent != directory or not candidate.is_file():
+        return None
+    return candidate
 
 
 def _safe_part(value: str) -> str:

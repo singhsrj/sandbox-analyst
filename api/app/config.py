@@ -41,6 +41,7 @@ class Settings(BaseSettings):
     model_provider: ModelProvider = "bedrock-openai"
     model: str = "openai.gpt-oss-120b"
     fallback_models: CsvList = Field(default_factory=list)
+    allowed_models: CsvList = Field(default_factory=list)  # extra model ids users may select
     judge_provider: ModelProvider = "bedrock-openai"
     judge_model: str = "openai.gpt-oss-120b"
 
@@ -66,6 +67,7 @@ class Settings(BaseSettings):
     sandbox_timeout_seconds: int = Field(default=600, ge=30, le=3600)
     sandbox_template: str = "code-interpreter-v1"  # has pandas/matplotlib; no pip needed
     sandbox_command_timeout_seconds: int = Field(default=120, ge=5, le=600)
+    sandbox_idle_seconds: int = Field(default=300, ge=30)  # reaper kills sandboxes idle this long
 
     artifacts_dir: Path = REPO_ROOT / "runs"  # sandbox deliverables + saved run records
 
@@ -89,8 +91,11 @@ class Settings(BaseSettings):
     max_cost_usd_per_request: float = Field(default=0.10, gt=0)
     max_cost_usd_per_session: float = Field(default=0.50, gt=0)
     rate_limit_per_minute: int = Field(default=10, ge=1)
+    login_attempts_per_minute: int = Field(default=5, ge=1)
+    max_concurrent_runs: int = Field(default=3, ge=1)
+    max_question_chars: int = Field(default=2_000, ge=10)
 
-    @field_validator("cors_allow_origins", "fallback_models", mode="before")
+    @field_validator("cors_allow_origins", "fallback_models", "allowed_models", mode="before")
     @classmethod
     def _split_csv(cls, value: object) -> object:
         if isinstance(value, str):

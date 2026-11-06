@@ -69,3 +69,24 @@ Short ADRs. Each: context → decision → consequences. Newest at the bottom.
 - Windows: psycopg async needs the selector event loop; `app/__init__.py` sets it (Linux production is unaffected).
 - Langfuse: read traces through `/api/public/v2/observations`; the v1 traces endpoint is removed on 2026-11-16.
 - Tests are hermetic: `tests/conftest.py` clears every settings variable from the environment; live tests skip when credentials are absent, so CI runs without secrets.
+
+## ADR-017: Streaming = AI SDK UI message stream, produced by a pure adapter
+- **Context:** The frontend uses AI Elements + `useChat`, which consume the AI SDK "UI message stream" (SSE, header `x-vercel-ai-ui-message-stream: v1`, chunks `start`, `text-*`, `tool-input-*`, `tool-output-*`, `data-*`, `finish`, then `[DONE]`). `ai` is at 7.x and `@ai-sdk/react` at 4.x on npm (2026-11-06), newer than the brief assumed. The docs do not confirm `tool-output-error`, `id`/`transient` on data parts, or how approvals travel, so M4 validates our chunks against the installed package's own schema instead of trusting docs.
+- **Decision:** `app/streaming/adapter.py` is a pure, unit-tested translator from LangGraph `["messages","updates"]` events to chunks. Live text comes from `messages`; tool cards come from `updates` (complete inputs, reliable outputs). If an answer only appears in `updates` it is still emitted. The agent's todo list is a `data-todos` part, artifacts are `data-artifacts`, run stats are `data-run`. Tests replay a REAL recorded agent stream.
+- **Consequences:** Models that answer in one burst (gpt-oss on Bedrock sends no token-by-token text and exposes no reasoning) work as well as token streamers. The "reasoning" panel shows the plan, not hidden thoughts.
+
+## ADR-018: Streamed model calls must request token usage
+- **Context:** Found by the live test: with streaming, usage was 0 because OpenAI-compatible clients do not request it for non-OpenAI endpoints, which silently disabled the token budget.
+- **Decision:** `stream_usage=True` for every provider; `UsageTracker` counts `calls_without_usage` so a blind spot is visible; regression tests on both.
+
+## ADR-019: Run lifecycle, persistence and cleanup
+- One run per thread at a time (409) and a global cap (`MAX_CONCURRENT_RUNS`, 429). Pre-flight failures are real HTTP statuses; failures after streaming starts are an `error` chunk (secrets are never included, only the exception type).
+- Whatever happens (success, error, budget stop, browser disconnect) the run is persisted, output files are collected and the trace is flushed. A disconnect is a first-class path (`status=aborted`), tested.
+- The sandbox is created on the first message of a thread, reused for later turns, reconnected by id after an API restart, killed by an idle reaper (verified live: 305 s after last use) and on shutdown or thread deletion.
+- Stored chunks are coalesced, so a turn can be replayed exactly (ADR-007 replay mode).
+- SSE sends `: ping` heartbeats every 15 s so load balancers do not close the stream during long model calls.
+- `/api/health` is a pure liveness check with no dependency on the DB; details appear only once services are up.
+
+## ADR-020: Developer ergonomics (Windows, slow imports)
+- Run the API with `uv run python -m app.serve`: on Windows uvicorn's default Proactor loop breaks psycopg async (the pool times out at startup), so the entry point selects the Selector loop. Linux is unaffected.
+- `deepagents` imports the full `anthropic` SDK (15-50 s on a slow disk). It is imported lazily inside `build_agent`, so the API layer and unit tests do not pay for it (unit tests: 52 s -> 14 s).

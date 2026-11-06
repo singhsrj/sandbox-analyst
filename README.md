@@ -2,7 +2,7 @@
 
 Ask a business question in plain English; a deep agent plans the work, runs **read-only SQL** against Postgres through a hardened tool, analyses the results in an **isolated E2B sandbox**, and returns a report with charts, the SQL used and its assumptions — with every step traced and evaluated.
 
-> Status: **M2 – agent core done** (M0 scaffolding, M1 Neon roles + seeded dataset, M2 CLI agent). Next: M3 streaming API. Results, demo link and architecture diagram will be added as they are measured/built. No numbers in this README are claimed until an eval run produces them.
+> Status: **M2 – agent core done** (M0 scaffolding, M1 Neon roles + seeded dataset, M2 CLI agent). M3 (streaming API) done. Next: M4 frontend. Results, demo link and architecture diagram will be added as they are measured/built. No numbers in this README are claimed until an eval run produces them.
 
 ## Quick start (backend)
 
@@ -33,6 +33,23 @@ uv run python -m app.cli --model qwen.qwen3-235b-a22b-2507 "Which category has t
 ```
 
 The agent plans, inspects the schema, runs read-only SQL (validated, then executed as `analyst_ro`), analyses the CSV in an isolated E2B sandbox (no internet, no secrets), writes a report with charts, and prints model, tokens, time and a Langfuse trace link. Files land in `runs/<thread>/` (git-ignored). See [docs/m2-findings.md](docs/m2-findings.md) for what was measured and which failure modes were seen.
+
+## Run the API
+
+```bash
+uv run python -m app.serve --port 8000     # on Windows this selects the event loop psycopg needs
+```
+
+| Endpoint | Auth | Purpose |
+|---|---|---|
+| `GET /api/health` | none | liveness |
+| `GET /api/examples`, `GET /api/schema` | none | example questions, schema browser data |
+| `POST /api/session` | access code | returns a short-lived bearer token |
+| `POST /api/chat` | bearer | AI SDK UI message stream (SSE) |
+| `GET /api/threads`, `GET /api/threads/{id}`, `DELETE ...` | bearer | thread history (replayable) |
+| `GET /api/threads/{id}/artifacts/{name}` | bearer | chart / CSV / report download |
+
+Live runs need `DEMO_ACCESS_CODE` and `SESSION_TOKEN_SECRET` in `.env`; without them login is disabled.
 
 ## Checks
 
