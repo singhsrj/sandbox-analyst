@@ -4,6 +4,8 @@ Ask a business question in plain English; a deep agent plans the work, runs **re
 
 > Status: **M2 â€“ agent core done** (M0 scaffolding, M1 Neon roles + seeded dataset, M2 CLI agent). M3 (streaming API) done. Next: M4 frontend. Results, demo link and architecture diagram will be added as they are measured/built. No numbers in this README are claimed until an eval run produces them.
 
+**Live demo:** https://sandbox-analyst.vercel.app — recorded, checked runs are open to everyone; live questions need the access code. API: https://sandbox-analyst.duckdns.org/api/health. Deployment: [docs/deploy.md](docs/deploy.md), infrastructure: [infra/](infra/README.md).
+
 ## Quick start (backend)
 
 Requires [uv](https://docs.astral.sh/uv/).
