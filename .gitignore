@@ -20,3 +20,4 @@ runs/
 # Local dev logs
 *.log
 *.tmp
+!deploy/.env.production.example

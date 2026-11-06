@@ -1,0 +1,18 @@
+# Keep the build context small and free of secrets.
+.env
+.env.*
+!.env.example
+**/.venv
+**/__pycache__
+**/*.pyc
+runs/
+web/
+docs/
+evals/
+db/
+scripts/
+api/tests/
+.git/
+.github/
+**/*.log
+**/node_modules

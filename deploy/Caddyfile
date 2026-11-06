@@ -1,0 +1,27 @@
+# HTTPS for the API with an automatic Let's Encrypt certificate for API_HOST.
+{$API_HOST} {
+	# Security headers for every response (the API serves JSON, SSE and downloads only).
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		-Server
+	}
+
+	# Large bodies are never legitimate here (questions are capped at 2,000 characters).
+	request_body {
+		max_size 256KB
+	}
+
+	reverse_proxy api:8000 {
+		# Server-sent events: pass every chunk through immediately, never buffer.
+		flush_interval -1
+		# Caddy overwrites X-Forwarded-For with the real client address for untrusted clients,
+		# so a visitor cannot inject a fake one.
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}

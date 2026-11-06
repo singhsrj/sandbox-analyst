@@ -1,0 +1,53 @@
+# Production stack on one small server: Caddy (HTTPS, public) -> API (private network only).
+#
+#   cd deploy && docker compose up -d --build
+#
+# Secrets live in deploy/.env on the server (never committed; see deploy/.env.production.example).
+# The API container publishes NO port: only Caddy can reach it, so the forwarded-for header it
+# trusts can only come from Caddy.
+
+name: sandbox-analyst
+
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: api/Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      APP_ENV: prod
+      # Caddy's network (below). Never "*": uvicorn would trust a client-supplied address.
+      FORWARDED_ALLOW_IPS: 172.28.0.0/24
+    volumes:
+      - runs:/app/runs
+    networks: [backend]
+    logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
+    deploy:
+      resources:
+        limits: {memory: 1500M}
+
+  caddy:
+    image: caddy:2.11.7-alpine  # released 2026-10-03; pin, update deliberately
+    restart: unless-stopped
+    depends_on:
+      api: {condition: service_healthy}
+    ports: ["80:80", "443:443"]
+    environment:
+      API_HOST: ${API_HOST:?set API_HOST in deploy/.env, e.g. 13-233-1-2.sslip.io}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [backend]
+    logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
+
+networks:
+  backend:
+    ipam:
+      config: [{subnet: 172.28.0.0/24}]
+
+volumes:
+  runs:
+  caddy_data:
+  caddy_config:
