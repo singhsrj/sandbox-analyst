@@ -16,6 +16,8 @@ Design choices
     from there, so the user never sees an empty reply.
   * The agent's todo list is surfaced as a `data-todos` part (same id -> updated in place).
   * Custom data parts: data-todos, data-artifacts, data-run.
+  * Human approval uses the SDK's own tool-approval-request / tool-approval-response /
+    tool-output-denied chunks; a resumed run continues the same assistant message.
 """
 
 from __future__ import annotations
@@ -29,6 +31,7 @@ Chunk = dict[str, Any]
 
 MAX_TOOL_OUTPUT_CHARS = 6_000
 TODO_TOOL = "write_todos"
+INTERRUPT_KEY = "__interrupt__"  # LangGraph puts pending interrupts under this key in "updates"
 
 
 def clip(text: str, limit: int = MAX_TOOL_OUTPUT_CHARS) -> str:
@@ -59,11 +62,46 @@ class UIStreamAdapter:
         self._streamed_ids: set[str] = set()
         self._tool_inputs: set[str] = set()
         self._tool_outputs: set[str] = set()
+        self._denied: set[str] = set()  # tool calls a reviewer rejected
+        self._approvals: set[str] = set()
+        # Approval interrupts already sent to the browser. LangGraph checkpoints a pause before it
+        # emits it, so these are pending even if the client disconnects right afterwards.
+        self.interrupts_sent: list[Any] = []
         self._finished = False
 
     # ------------------------------------------------------------------ lifecycle
-    def start(self) -> list[Chunk]:
-        return [{"type": "start", "messageId": self.message_id}, {"type": "start-step"}]
+    def start(self, *, continuing: bool = False) -> list[Chunk]:
+        """Open the message. When `continuing` (resuming after an approval), no messageId is
+        sent, so the browser keeps appending to the assistant message it already shows."""
+        first: Chunk = (
+            {"type": "start"}
+            if continuing
+            else {
+                "type": "start",
+                "messageId": self.message_id,
+            }
+        )
+        return [first, {"type": "start-step"}]
+
+    def approval_responses(self, audit: list[dict[str, Any]]) -> list[Chunk]:
+        """Record the reviewer's decisions in the stream (so a replay shows them too)."""
+        out: list[Chunk] = []
+        for item in audit:
+            approved = item["decision"] != "reject"
+            if not approved:
+                self._denied.add(item["tool_call_id"])
+            chunk: Chunk = {
+                "type": "tool-approval-response",
+                "approvalId": item["id"],
+                "approved": approved,
+            }
+            note = item.get("reason") or (
+                "Edited by the reviewer before it ran." if item["decision"] == "edit" else None
+            )
+            if note:
+                chunk["reason"] = note
+            out.append(chunk)
+        return out
 
     def finish(
         self,
@@ -114,7 +152,10 @@ class UIStreamAdapter:
         out: list[Chunk] = []
         if not isinstance(payload, dict):
             return out
-        for node_update in payload.values():
+        for node, node_update in payload.items():
+            if node == INTERRUPT_KEY:
+                out.extend(self._on_interrupts(node_update))
+                continue
             messages = node_update.get("messages") if isinstance(node_update, dict) else None
             if not isinstance(messages, list):
                 continue
@@ -158,10 +199,48 @@ class UIStreamAdapter:
         if not call_id or call_id in self._tool_outputs:
             return []
         self._tool_outputs.add(call_id)
+        if call_id in self._denied:
+            return [{"type": "tool-output-denied", "toolCallId": call_id}]
         text = clip(message_text(message))
         if getattr(message, "status", "success") == "error":
             return [{"type": "tool-output-error", "toolCallId": call_id, "errorText": text}]
         return [{"type": "tool-output-available", "toolCallId": call_id, "output": text}]
+
+    def _on_interrupts(self, interrupts: Any) -> list[Chunk]:
+        """A paused run: one approval request per gated tool call (see app/agent/approvals.py)."""
+        out: list[Chunk] = []
+        for item in interrupts if isinstance(interrupts, (list, tuple)) else ():
+            value = getattr(item, "value", None)
+            approval_id = str(getattr(item, "id", "") or "")
+            if not isinstance(value, dict) or value.get("type") != "tool_approval":
+                continue
+            call_id = str(value.get("tool_call_id") or "")
+            if not approval_id or not call_id or approval_id in self._approvals:
+                continue
+            self._approvals.add(approval_id)
+            self.interrupts_sent.append(item)
+            out.extend(self._close_text())
+            if call_id not in self._tool_inputs:  # never shown (should not happen): show it now
+                self._tool_inputs.add(call_id)
+                name = str(value.get("name", "tool"))
+                out.append({"type": "tool-input-start", "toolCallId": call_id, "toolName": name})
+                out.append(
+                    {
+                        "type": "tool-input-available",
+                        "toolCallId": call_id,
+                        "toolName": name,
+                        "input": value.get("args") or {},
+                    }
+                )
+            chunk: Chunk = {
+                "type": "tool-approval-request",
+                "approvalId": approval_id,
+                "toolCallId": call_id,
+            }
+            if value.get("description"):
+                chunk["reason"] = str(value["description"])
+            out.append(chunk)
+        return out
 
     # ------------------------------------------------------------------ text helpers
     def _append_text(self, text: str) -> list[Chunk]:

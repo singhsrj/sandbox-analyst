@@ -2,7 +2,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { chunksToMessage } from "@/lib/replay";
-import { realRun, toolErrorRun } from "@/test-utils/fake-api";
+import { approvalPaused, realRun, toolErrorRun } from "@/test-utils/fake-api";
 import { AssistantTurn, organize } from "../assistant-turn";
 
 // Syntax highlighting (shiki) is not what these tests are about, and it is slow in jsdom.
@@ -28,6 +28,23 @@ describe("organize", () => {
     expect(todos.length).toBeGreaterThan(0);
     expect(artifacts[0].name).toBe("chart.png");
     expect(run?.status).toBe("ok");
+  });
+});
+
+describe("AssistantTurn approvals", () => {
+  it("the approval card is visible even when the step first rendered as running (found live)", async () => {
+    const paused = await messageFrom(approvalPaused);
+    const running = {
+      ...paused,
+      parts: paused.parts.map((p) =>
+        "approval" in p ? ({ ...p, state: "input-available", approval: undefined } as typeof p) : p,
+      ),
+    };
+    const props = { streaming: true, selected: false, onShowFiles: () => {} };
+    const { rerender } = render(<AssistantTurn message={running} {...props} />);
+    expect(screen.queryByRole("region", { name: /approval needed/i })).not.toBeInTheDocument();
+    rerender(<AssistantTurn message={paused} {...props} streaming={false} />);
+    expect(screen.getByRole("region", { name: /approval needed/i })).toBeVisible();
   });
 });
 

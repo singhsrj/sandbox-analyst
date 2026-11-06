@@ -68,6 +68,42 @@ describe("replaying stored chunks into a message", () => {
     expect(failed).toHaveProperty("errorText", "Traceback: boom");
   });
 
+  it("a paused run shows the query waiting for approval, with the server's reason", async () => {
+    const message = await chunksToMessage(runs.approval_paused);
+    const [sql] = toolParts(message!);
+    expect(sql).toHaveProperty("state", "approval-requested");
+    expect(sql).toHaveProperty("approval.id", "approval-1");
+    expect(sql).toHaveProperty("approval.requestReason", expect.stringContaining("raw rows"));
+  });
+
+  it("paused + approved resume reads back as one message with the query's result", async () => {
+    const message = await chunksToMessage([...runs.approval_paused, ...runs.approval_resumed_approved]);
+    const [sql] = toolParts(message!);
+    expect(sql).toHaveProperty("state", "output-available");
+    expect(sql).toHaveProperty("approval.approved", true);
+    expect(message!.id).toBe("msg-contract"); // the resume did not replace the message id
+  });
+
+  it("paused + rejected resume shows the query as denied, with the reviewer's reason", async () => {
+    const message = await chunksToMessage([...runs.approval_paused, ...runs.approval_resumed_rejected]);
+    const [sql] = toolParts(message!);
+    expect(sql).toHaveProperty("state", "output-denied");
+    expect(sql).toHaveProperty("approval.approved", false);
+    expect(sql).toHaveProperty("approval.reason", "Too big");
+  });
+
+  it("history merges a resumed run into the turn it continued", async () => {
+    const base = { status: "ok", model: "m", final_answer: "", created_at: "2026-01-01T00:00:00Z" };
+    const messages = await runsToMessages([
+      { ...base, run_id: "r1", question: "Dump orders?", status: "awaiting_approval", chunks: runs.approval_paused },
+      { ...base, run_id: "r2", question: "Dump orders?", chunks: runs.approval_resumed_approved, summary: { resumes: true } },
+      { ...base, run_id: "r3", question: "Next question", chunks: runs.real_run_coalesced },
+    ]);
+    expect(messages.map((m) => m.role)).toEqual(["user", "assistant", "user", "assistant"]);
+    expect(toolParts(messages[1])[0]).toHaveProperty("state", "output-available");
+    expect(messages[2].parts[0]).toEqual({ type: "text", text: "Next question" });
+  });
+
   it("turns saved runs into alternating user and assistant messages", async () => {
     const messages = await runsToMessages([
       {

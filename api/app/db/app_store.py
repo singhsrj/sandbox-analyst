@@ -40,12 +40,18 @@ class ThreadInfo:
 
 
 def make_pool(settings: Settings) -> AsyncConnectionPool[Any]:
-    """Pool shared by the store and LangGraph's checkpointer (needs autocommit + dict rows)."""
+    """Pool shared by the store and LangGraph's checkpointer (needs autocommit + dict rows).
+
+    Neon closes idle connections (found live: `AdminShutdown` on the first request after a quiet
+    spell), so every connection is checked when it is handed out and idle ones are recycled early.
+    """
     return AsyncConnectionPool(
         settings.secret("app_database_url"),
         min_size=1,
         max_size=6,
         open=False,
+        check=AsyncConnectionPool.check_connection,
+        max_idle=120,
         kwargs={"autocommit": True, "prepare_threshold": None, "row_factory": dict_row},
     )
 
@@ -147,6 +153,43 @@ class AppStore:
         if row is None:  # INSERT ... RETURNING always yields a row
             raise RuntimeError("run was not saved")
         return str(row["run_id"])
+
+    async def last_run(self, thread_id: str) -> dict[str, Any] | None:
+        """Status and summary of the thread's newest run (used to find pending approvals)."""
+        async with self._pool.connection() as conn:
+            cur = await conn.execute(
+                "SELECT run_id, question, status, summary FROM app.runs WHERE thread_id = %s "
+                "ORDER BY created_at DESC LIMIT 1",
+                (thread_id,),
+            )
+            row = cast(dict[str, Any] | None, await cur.fetchone())
+        if row is not None:
+            row["run_id"] = str(row["run_id"])
+        return row
+
+    # ------------------------------------------------------------------ budgets
+    async def record_usage(self, *, owner_id: str, thread_id: str, total_tokens: int) -> None:
+        async with self._pool.connection() as conn:
+            await conn.execute(
+                "INSERT INTO app.usage_ledger (owner_id, thread_id, total_tokens) "
+                "VALUES (%s, %s, %s)",
+                (owner_id, thread_id, max(0, int(total_tokens))),
+            )
+
+    async def tokens_used_last_day(self, owner_id: str | None = None) -> int:
+        """Tokens spent in the last 24 hours, by one owner or (owner_id=None) by everyone."""
+        query = (
+            "SELECT coalesce(sum(total_tokens), 0) AS used FROM app.usage_ledger "
+            "WHERE created_at > now() - interval '24 hours'"
+        )
+        params: tuple[Any, ...] = ()
+        if owner_id is not None:
+            query += " AND owner_id = %s"
+            params = (owner_id,)
+        async with self._pool.connection() as conn:
+            cur = await conn.execute(query, params)
+            row = cast(dict[str, Any] | None, await cur.fetchone())
+        return int(row["used"]) if row else 0
 
     async def list_runs(self, thread_id: str, owner_id: str) -> list[dict[str, Any]]:
         await self.get_thread(thread_id, owner_id)  # ownership check

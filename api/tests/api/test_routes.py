@@ -15,7 +15,7 @@ from app.auth import issue_token
 from app.main import create_app
 from app.ratelimit import RateLimiter
 from app.service.chat import ChatService
-from tests.fakes import FakeAgent, FakeSandboxes, FakeStore, recorded_events
+from tests.fakes import FakeAgent, FakeSandboxes, FakeStore, PausingAgent, recorded_events
 from tests.helpers import make_settings
 
 CODE = "open-sesame"
@@ -268,6 +268,116 @@ def test_someone_elses_thread_cannot_be_used_or_read(
     assert client.get(f"/api/threads/{THREAD}", headers=intruder).status_code == 404
     assert client.delete(f"/api/threads/{THREAD}", headers=intruder).status_code == 404
     assert client.get("/api/threads", headers=intruder).json() == {"threads": []}
+
+
+# ----------------------------------------------------------------------------- approvals (M5)
+@pytest.fixture
+def pausing(monkeypatch: pytest.MonkeyPatch) -> PausingAgent:
+    from app.service import chat as chat_module
+
+    agent = PausingAgent()
+
+    async def build_pausing(*a: Any, **k: Any) -> Any:
+        return agent
+
+    monkeypatch.setattr(chat_module, "build_agent", build_pausing)
+    return agent
+
+
+def stream_payloads(client: TestClient, body: dict[str, Any], headers: dict[str, str]) -> list[Any]:
+    with client.stream("POST", "/api/chat", json=body, headers=headers) as response:
+        assert response.status_code == 200, response.read()
+        frames = read_sse(response)
+    return [json.loads(f[6:]) for f in frames if f.startswith("data: {")]
+
+
+def test_approval_round_trip_over_http(
+    env: tuple[TestClient, Services, FakeStore], pausing: PausingAgent
+) -> None:
+    client, services, store = env
+    headers = auth(services)
+    first = stream_payloads(client, {**chat_body(), "approval_mode": "strict"}, headers)
+    request = next(p for p in first if p["type"] == "tool-approval-request")
+
+    # a new question while waiting is refused with a clear reason
+    blocked = client.post("/api/chat", json=chat_body("Something else?"), headers=headers)
+    assert blocked.status_code == 409 and "waiting for your approval" in blocked.json()["detail"]
+
+    answer = {
+        "id": THREAD,
+        "messages": [{"role": "assistant", "parts": []}],
+        "approvals": [{"id": request["approvalId"], "approved": True}],
+    }
+    resumed = stream_payloads(client, answer, headers)
+    assert resumed[0] == {"type": "start"}
+    assert store.runs[-1]["status"] == "ok" and pausing.resumes == [{"intr-1": {"type": "approve"}}]
+
+
+def test_a_forged_or_stale_approval_is_refused(
+    env: tuple[TestClient, Services, FakeStore], pausing: PausingAgent
+) -> None:
+    client, services, _ = env
+    headers = auth(services)
+    stream_payloads(client, chat_body(), headers)
+    forged = {
+        "id": THREAD,
+        "messages": [{"role": "assistant", "parts": []}],
+        "approvals": [{"id": "not-a-real-interrupt", "approved": True}],
+    }
+    assert client.post("/api/chat", json=forged, headers=headers).status_code == 409
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"approval_mode": "off"},  # the browser cannot switch approvals off
+        {"approvals": []},
+        {"approvals": [{"id": "x", "approved": True, "edited_query": "x" * 20_001}]},
+        {"approvals": [{"id": "x", "approved": "maybe"}]},
+    ],
+)
+def test_invalid_approval_fields_are_rejected(
+    env: tuple[TestClient, Services, FakeStore], extra: dict[str, Any]
+) -> None:
+    client, services, _ = env
+    assert (
+        client.post("/api/chat", json={**chat_body(), **extra}, headers=auth(services)).status_code
+        == 422
+    )
+
+
+# ----------------------------------------------------------------------------- budgets & limits
+def test_an_exhausted_budget_is_a_429_with_a_readable_reason(
+    env: tuple[TestClient, Services, FakeStore],
+) -> None:
+    client, services, store = env
+    store.usage.append(("owner-aaaaaaaa", services.settings.max_tokens_per_owner_per_day))
+    response = client.post("/api/chat", json=chat_body(), headers=auth(services))
+    assert response.status_code == 429 and "daily budget" in response.json()["detail"]
+    assert not store.runs
+
+
+def test_runs_are_limited_per_network_across_sessions(
+    env: tuple[TestClient, Services, FakeStore],
+) -> None:
+    client, services, _ = env
+    services.run_ip_limiter = RateLimiter(2, 3600)
+    statuses = [
+        client.post(
+            "/api/chat",
+            json=chat_body(thread=f"thread-ip-{i}000"),
+            headers=auth(services, f"owner-{i}aaaaaaa"),  # a fresh session each time
+        ).status_code
+        for i in range(3)
+    ]
+    assert statuses == [200, 200, 429]
+
+
+def test_new_sessions_are_limited_per_network(env: tuple[TestClient, Services, FakeStore]) -> None:
+    client, services, _ = env
+    services.session_ip_limiter = RateLimiter(2, 3600)
+    codes = [client.post("/api/session", json={"code": CODE}).status_code for _ in range(3)]
+    assert codes == [200, 200, 429]
 
 
 # ----------------------------------------------------------------------------- threads

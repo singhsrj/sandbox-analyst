@@ -205,6 +205,18 @@
     border-color: var(--destructive);
     background: var(--destructive);
   }
+  /* paused for a human: a highlighted ring that does not pulse (nothing is happening) */
+  .trail-node[data-state="waiting"] {
+    border-color: var(--ink);
+    background: var(--marker);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--marker) 45%, transparent);
+  }
+  /* a step the reviewer rejected: hollow, it never ran */
+  .trail-node[data-state="denied"] {
+    border-style: dashed;
+    border-color: var(--graphite);
+    background: var(--background);
+  }
   @keyframes node-pulse {
     50% {
       box-shadow: 0 0 0 4px color-mix(in srgb, var(--marker) 35%, transparent);

@@ -10,12 +10,21 @@ from typing import Any
 
 import pytest
 
+from app.agent.approvals import ApprovalAnswer, ApprovalMismatch
 from app.agent.usage import BudgetExceeded, StepLimitExceeded
 from app.config import Settings
+from app.db.app_store import ThreadNotFound
 from app.service import chat as chat_module
-from app.service.chat import ChatService, ServerBusy, ThreadBusy
+from app.service.chat import (
+    ApprovalPending,
+    BudgetExhausted,
+    ChatService,
+    ServerBusy,
+    ThreadBusy,
+    effective_approval_mode,
+)
 from app.streaming.sse import sse_stream
-from tests.fakes import FakeAgent, FakeSandboxes, FakeStore, recorded_events
+from tests.fakes import FakeAgent, FakeSandboxes, FakeStore, PausingAgent, recorded_events
 from tests.helpers import make_settings
 
 
@@ -224,6 +233,190 @@ async def test_sandbox_id_is_remembered_for_reconnects(
 ) -> None:
     await collect(make_service(settings, store))
     assert store.sandbox_ids["thread-12345"] == "sbx-fake"
+
+
+# ----------------------------------------------------------------------------- approvals (M5)
+async def pause(service: ChatService, patched: dict[str, Any], mode: Any = None) -> list[Any]:
+    patched["agent"] = PausingAgent()
+    turn = await service.prepare(
+        thread_id="thread-12345",
+        owner_id="owner-12345",
+        question="Dump orders?",
+        approval_mode=mode,
+    )
+    return [chunk async for chunk in service.stream(turn)]
+
+
+async def test_a_flagged_query_pauses_the_run_and_records_what_is_pending(
+    settings: Settings, store: FakeStore, patched: dict[str, Any]
+) -> None:
+    service = make_service(settings, store)
+    chunks = await pause(service, patched)
+
+    request = next(c for c in chunks if c["type"] == "tool-approval-request")
+    assert request == {
+        "type": "tool-approval-request",
+        "approvalId": "intr-1",
+        "toolCallId": "call-sql-1",
+        "reason": "Flagged for review: returns raw rows of analytics.orders",
+    }
+    assert not any(c["type"] == "error" for c in chunks) and chunks[-1] == {"type": "finish"}
+    (saved,) = store.runs
+    assert saved["status"] == "awaiting_approval" and saved["final_answer"] == ""
+    assert saved["summary"]["pending_approvals"][0]["args"]["query"] == PausingAgent.QUERY
+    assert saved["summary"]["approval_mode"] == "normal"
+
+
+async def test_a_disconnect_right_after_the_card_appears_still_leaves_it_answerable(
+    settings: Settings, store: FakeStore, patched: dict[str, Any]
+) -> None:
+    """Found live: a page reload just after the card appeared saved the run as 'aborted', and
+    approving the card then failed with 'nothing is waiting for approval'."""
+
+    class SlowAfterPause(PausingAgent):
+        async def astream(self, payload: Any, config: Any, stream_mode: Any) -> AsyncIterator[Any]:
+            async for event in super().astream(payload, config, stream_mode):
+                yield event
+            await asyncio.sleep(3600)  # still finishing when the browser goes away
+
+    patched["agent"] = SlowAfterPause()
+    service = make_service(settings, store)
+    turn = await service.prepare(thread_id="thread-12345", owner_id="owner-12345", question="q?")
+    stream = service.stream(turn)
+    async for chunk in stream:
+        if chunk["type"] == "tool-approval-request":
+            break
+    await stream.aclose()  # the reload
+
+    (saved,) = store.runs
+    assert saved["status"] == "awaiting_approval"
+    assert saved["summary"]["pending_approvals"][0]["id"] == "intr-1"
+    patched["agent"] = PausingAgent()
+    resumed = await service.prepare_resume(
+        thread_id="thread-12345", owner_id="owner-12345", answers=[ApprovalAnswer("intr-1", True)]
+    )
+    assert resumed.resume == {"intr-1": {"type": "approve"}}
+
+
+async def test_a_new_question_is_refused_while_an_approval_is_pending(
+    settings: Settings, store: FakeStore, patched: dict[str, Any]
+) -> None:
+    service = make_service(settings, store)
+    await pause(service, patched)
+    with pytest.raises(ApprovalPending):
+        await service.prepare(thread_id="thread-12345", owner_id="owner-12345", question="next?")
+
+
+async def test_approving_resumes_the_same_message_and_finishes_the_run(
+    settings: Settings, store: FakeStore, patched: dict[str, Any]
+) -> None:
+    service = make_service(settings, store)
+    await pause(service, patched, mode="strict")
+    turn = await service.prepare_resume(
+        thread_id="thread-12345",
+        owner_id="owner-12345",
+        answers=[ApprovalAnswer("intr-1", True)],
+    )
+    # mode, model and question come from the paused run, not the request
+    assert turn.approval_mode == "strict" and turn.question == "Dump orders?"
+    chunks = [c async for c in service.stream(turn)]
+
+    assert chunks[0] == {"type": "start"}  # no new messageId: the browser keeps its message
+    assert {"type": "tool-approval-response", "approvalId": "intr-1", "approved": True} in chunks
+    assert any(c["type"] == "tool-output-available" for c in chunks)
+    assert patched["agent"].resumes == [{"intr-1": {"type": "approve"}}]
+    resumed = store.runs[-1]
+    assert resumed["status"] == "ok" and resumed["final_answer"] == "Answer after approval."
+    assert resumed["summary"]["resumes"] is True
+    assert resumed["summary"]["decisions"][0]["decision"] == "approve"
+    # the thread is open for new questions again
+    await service.prepare(thread_id="thread-12345", owner_id="owner-12345", question="next?")
+
+
+async def test_rejecting_shows_the_query_as_denied(
+    settings: Settings, store: FakeStore, patched: dict[str, Any]
+) -> None:
+    service = make_service(settings, store)
+    await pause(service, patched)
+    turn = await service.prepare_resume(
+        thread_id="thread-12345",
+        owner_id="owner-12345",
+        answers=[ApprovalAnswer("intr-1", False, "Too much data")],
+    )
+    chunks = [c async for c in service.stream(turn)]
+    assert {"type": "tool-output-denied", "toolCallId": "call-sql-1"} in chunks
+    assert patched["agent"].resumes == [{"intr-1": {"type": "reject", "message": "Too much data"}}]
+
+
+async def test_resume_requests_must_match_a_paused_run(
+    settings: Settings, store: FakeStore, patched: dict[str, Any]
+) -> None:
+    service = make_service(settings, store)
+    await collect(service)  # a normal, finished run
+    with pytest.raises(ApprovalMismatch):
+        await service.prepare_resume(
+            thread_id="thread-12345", owner_id="owner-12345", answers=[ApprovalAnswer("x", True)]
+        )
+    await pause(service, patched)
+    with pytest.raises(ApprovalMismatch):
+        await service.prepare_resume(
+            thread_id="thread-12345",
+            owner_id="owner-12345",
+            answers=[ApprovalAnswer("forged-id", True)],
+        )
+    with pytest.raises(ThreadNotFound):  # someone else cannot answer my approvals
+        await service.prepare_resume(
+            thread_id="thread-12345",
+            owner_id="owner-intruder",
+            answers=[ApprovalAnswer("intr-1", True)],
+        )
+
+
+@pytest.mark.parametrize(
+    ("server", "requested", "expected"),
+    [
+        ("normal", None, "normal"),
+        ("normal", "strict", "strict"),
+        ("strict", "normal", "strict"),  # the browser cannot loosen the server's setting
+        ("off", "normal", "normal"),
+        ("normal", "off", "normal"),
+    ],
+)
+def test_the_browser_can_only_make_approvals_stricter(
+    server: Any, requested: Any, expected: str
+) -> None:
+    assert effective_approval_mode(server, requested) == expected
+
+
+# ----------------------------------------------------------------------------- budgets (M5)
+async def test_every_run_is_recorded_in_the_usage_ledger(
+    settings: Settings, store: FakeStore, patched: dict[str, Any]
+) -> None:
+    await collect(make_service(settings, store))
+    assert store.usage == [("owner-12345", 0)]  # the fake agent reports no tokens
+
+
+async def test_an_owner_over_the_daily_budget_is_refused_before_running(
+    tmp_path: Path, store: FakeStore, patched: dict[str, Any]
+) -> None:
+    settings = make_settings(ARTIFACTS_DIR=str(tmp_path), MAX_TOKENS_PER_OWNER_PER_DAY="5000")
+    store.usage.append(("owner-12345", 5000))
+    service = make_service(settings, store)
+    with pytest.raises(BudgetExhausted, match="daily budget"):
+        await service.prepare(thread_id="thread-12345", owner_id="owner-12345", question="q?")
+    # someone else still can
+    await service.prepare(thread_id="thread-99999", owner_id="owner-other", question="q?")
+
+
+async def test_the_global_daily_budget_stops_everyone(
+    tmp_path: Path, store: FakeStore, patched: dict[str, Any]
+) -> None:
+    settings = make_settings(ARTIFACTS_DIR=str(tmp_path), MAX_TOKENS_PER_DAY="5000")
+    store.usage.extend([("a", 3000), ("b", 2000)])
+    with pytest.raises(BudgetExhausted, match="demo has used"):
+        await make_service(settings, store).prepare(
+            thread_id="thread-12345", owner_id="owner-new", question="q?"
+        )
 
 
 async def test_run_summary_keys_match_what_the_frontend_and_its_fixture_expect(

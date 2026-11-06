@@ -41,6 +41,8 @@ async def open_services(settings: Settings) -> AsyncIterator[Services]:
             chat=ChatService(settings, AppStore(pool), sandboxes, checkpointer),
             login_limiter=RateLimiter(settings.login_attempts_per_minute),
             chat_limiter=RateLimiter(settings.rate_limit_per_minute),
+            run_ip_limiter=RateLimiter(settings.runs_per_ip_per_hour, 3600),
+            session_ip_limiter=RateLimiter(settings.sessions_per_ip_per_hour, 3600),
         )
         try:
             yield services

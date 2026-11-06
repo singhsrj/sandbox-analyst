@@ -149,7 +149,14 @@ export function AssistantTurn({ message, streaming, selected, onShowFiles }: Ass
         </div>
       ) : null}
 
-      <RunFooter run={run} artifacts={artifacts} selected={selected} onShowFiles={onShowFiles} />
+      <RunFooter
+        run={run}
+        artifacts={artifacts}
+        selected={selected}
+        onShowFiles={onShowFiles}
+        // From the parts, not the run status: the status is the paused run's until a resume ends.
+        waitingForApproval={trail.some((item) => item.kind === "tool" && item.part.state === "approval-requested")}
+      />
     </article>
   );
 }
@@ -159,11 +166,13 @@ function RunFooter({
   artifacts,
   selected,
   onShowFiles,
+  waitingForApproval,
 }: {
   run: RunInfo | null;
   artifacts: ArtifactItem[];
   selected: boolean;
   onShowFiles: () => void;
+  waitingForApproval: boolean;
 }) {
   if (!run && artifacts.length === 0) return null;
   const facts: ReactNode[] = [];
@@ -178,6 +187,11 @@ function RunFooter({
       {run && STATUS_NOTE[run.status] ? (
         <p role="status" className="text-destructive">
           {STATUS_NOTE[run.status]}
+        </p>
+      ) : null}
+      {waitingForApproval ? (
+        <p role="status" className="text-foreground">
+          Paused: a query above is waiting for your approval.
         </p>
       ) : null}
       {run && run.unverified_file_claims.length > 0 ? (

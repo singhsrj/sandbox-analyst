@@ -5,8 +5,9 @@ import type { ReactNode } from "react";
 import { CodeBlock } from "@/components/ai-elements/code-block";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { formatCount, stripAnsi } from "@/lib/format";
-import { parseSqlOutput } from "@/lib/parse";
+import { parseSqlOutput, splitEditNotice } from "@/lib/parse";
 import { cn } from "@/lib/utils";
+import { ApprovalCard } from "./approval-card";
 
 /** The subset of an AI SDK tool part this UI relies on (static and dynamic tools share it). */
 export interface ToolPartLike {
@@ -16,15 +17,26 @@ export interface ToolPartLike {
   input?: unknown;
   output?: unknown;
   errorText?: string;
+  approval?: { id: string; approved?: boolean; reason?: string; requestReason?: string };
 }
 
-export type NodeState = "running" | "done" | "error";
+export type NodeState = "running" | "done" | "error" | "waiting" | "denied";
 
 export function nodeStateOf(part: ToolPartLike): NodeState {
-  if (part.state === "output-error" || part.state === "output-denied") return "error";
+  if (part.state === "output-error") return "error";
+  if (part.state === "output-denied") return "denied";
+  if (part.state === "approval-requested") return "waiting";
   if (part.state === "output-available") return "done";
   return "running";
 }
+
+const STATE_LABEL: Record<NodeState, string> = {
+  running: "In progress: ",
+  done: "Done: ",
+  error: "Failed: ",
+  waiting: "Waiting for your approval: ",
+  denied: "Not run: ",
+};
 
 interface StepProps {
   state: NodeState;
@@ -33,10 +45,12 @@ interface StepProps {
   children?: ReactNode;
   defaultOpen?: boolean;
   testId?: string;
+  /** Always shown under the summary, whether the details are open or not (approval cards). */
+  pinned?: ReactNode;
 }
 
 /** One entry on the evidence trail: a node on the line, a one-line summary, optional details. */
-export function TrailStep({ state, title, meta, children, defaultOpen = false, testId }: StepProps) {
+export function TrailStep({ state, title, meta, children, defaultOpen = false, testId, pinned }: StepProps) {
   const label = (
     <span className="flex min-w-0 flex-1 items-baseline gap-2">
       <span className="truncate text-sm font-medium">{title}</span>
@@ -48,9 +62,7 @@ export function TrailStep({ state, title, meta, children, defaultOpen = false, t
   return (
     <li className="relative pb-3" data-testid={testId} data-state={state}>
       <span className="trail-node" data-state={state} aria-hidden="true" />
-      <span className="sr-only">
-        {state === "running" ? "In progress: " : state === "error" ? "Failed: " : "Done: "}
-      </span>
+      <span className="sr-only">{STATE_LABEL[state]}</span>
       {children ? (
         <Collapsible defaultOpen={defaultOpen}>
           <CollapsibleTrigger className="group flex w-full items-center gap-1.5 rounded-sm py-0.5 text-left hover:bg-muted/60">
@@ -65,6 +77,7 @@ export function TrailStep({ state, title, meta, children, defaultOpen = false, t
       ) : (
         <div className="flex items-center gap-1.5 py-0.5">{label}</div>
       )}
+      {pinned ? <div className="pt-2">{pinned}</div> : null}
     </li>
   );
 }
@@ -133,16 +146,31 @@ export function ResultTable({ header, rows }: { header: string[]; rows: string[]
 }
 
 // ---------------------------------------------------------------------------------------------
+/** What the reviewer decided, shown on the step afterwards (also when replaying history). */
+function approvalNote(part: ToolPartLike): string | null {
+  const approval = part.approval;
+  if (!approval || approval.approved === undefined) return null;
+  if (!approval.approved)
+    return approval.reason ? `You rejected this query: “${approval.reason}”` : "You rejected this query.";
+  if (approval.reason) return `You approved this query. ${approval.reason}`;
+  return "You approved this query.";
+}
+
 function SqlStep({ part }: { part: ToolPartLike }) {
   const state = nodeStateOf(part);
-  const query = str(asRecord(part.input).query);
-  const text = outputText(part);
+  const { executedQuery, rest: text } = splitEditNotice(outputText(part));
+  const proposed = str(asRecord(part.input).query);
+  const query = executedQuery ?? proposed;
   const parsed = part.state === "output-available" ? parseSqlOutput(text) : null;
   const failed = state === "error" || (parsed !== null && parsed.kind !== "ok");
+  const waiting = state === "waiting" && part.approval !== undefined;
+  const note = approvalNote(part);
 
   let meta: ReactNode = state === "running" ? "running…" : undefined;
   let title: ReactNode = "Ran a query";
-  if (parsed?.kind === "ok") meta = `${formatCount(parsed.rows)} ${parsed.rows === 1 ? "row" : "rows"}`;
+  if (waiting) title = "Query waiting for your approval";
+  else if (state === "denied") title = "Query not run";
+  else if (parsed?.kind === "ok") meta = `${formatCount(parsed.rows)} ${parsed.rows === 1 ? "row" : "rows"}`;
   else if (parsed?.kind === "rejected") title = "Query was rejected";
   else if (parsed?.kind === "timeout") title = "Query timed out";
   else if (parsed?.kind === "error" || state === "error") title = "Query failed";
@@ -154,9 +182,22 @@ function SqlStep({ part }: { part: ToolPartLike }) {
       meta={meta}
       testId="step-sql"
       defaultOpen={failed}
+      // The card must be visible even though this step first appeared collapsed as "running".
+      pinned={
+        waiting ? (
+          <ApprovalCard approvalId={part.approval!.id} query={query} reason={part.approval!.requestReason} />
+        ) : note ? (
+          <p className="text-xs text-muted-foreground">{note}</p>
+        ) : undefined
+      }
     >
       <div className="grid grid-cols-1 gap-2">
         {query ? <CodeBlock className="wrap-code" code={query} language="sql" /> : null}
+        {executedQuery !== null && executedQuery !== proposed ? (
+          <p className="text-xs text-muted-foreground">
+            You edited this query; the SQL above is what actually ran.
+          </p>
+        ) : null}
         {parsed?.kind === "ok" ? (
           <>
             {parsed.warning ? (

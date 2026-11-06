@@ -5,8 +5,12 @@
 import fixture from "../../test-fixtures/chunks.json";
 
 type Chunk = Record<string, unknown>;
-export const realRun = (fixture as unknown as Record<string, Chunk[]>).real_run;
-export const toolErrorRun = (fixture as unknown as Record<string, Chunk[]>).tool_error_run;
+const runs = fixture as unknown as Record<string, Chunk[]>;
+export const realRun = runs.real_run;
+export const toolErrorRun = runs.tool_error_run;
+export const approvalPaused = runs.approval_paused;
+export const approvalApproved = runs.approval_resumed_approved;
+export const approvalRejected = runs.approval_resumed_rejected;
 
 export const ACCESS_CODE = "open-sesame";
 export const TOKEN = "tok-abc.sig-xyz";
@@ -32,6 +36,8 @@ export interface RecordedRequest {
 export interface FakeApiOptions {
   /** Chunks streamed for POST /api/chat. */
   chat?: Chunk[];
+  /** Successive POST /api/chat responses (one stream per request), e.g. pause then resume. */
+  chatSequence?: Chunk[][];
   /** Respond to POST /api/chat with this status instead of streaming. */
   chatStatus?: { status: number; detail: string };
   threads?: unknown[];
@@ -75,7 +81,8 @@ export function createFakeApi(options: FakeApiOptions = {}) {
     if (url.pathname === "/api/chat" && method === "POST") {
       if (headers.get("authorization") !== `Bearer ${TOKEN}`) return json({ detail: "Missing access token." }, 401);
       if (options.chatStatus) return json({ detail: options.chatStatus.detail }, options.chatStatus.status);
-      return new Response(sseBody(options.chat ?? realRun), {
+      const next = options.chatSequence?.shift();
+      return new Response(sseBody(next ?? options.chat ?? realRun), {
         status: 200,
         headers: { "content-type": "text/event-stream", "x-vercel-ai-ui-message-stream": "v1" },
       });

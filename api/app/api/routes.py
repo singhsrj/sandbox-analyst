@@ -5,6 +5,8 @@ GET    /api/examples                         anonymous: example question chips
 GET    /api/schema                           anonymous: schema browser data
 POST   /api/session                          access code -> bearer token
 POST   /api/chat                             SSE (AI SDK UI message stream)        [auth]
+                                             new question, or `approvals` to resume
+                                             a run paused for human approval
 GET    /api/threads                          this visitor's threads                [auth]
 GET    /api/threads/{id}                     thread + run history (replayable)     [auth]
 DELETE /api/threads/{id}                                                           [auth]
@@ -15,19 +17,27 @@ from __future__ import annotations
 
 import mimetypes
 import time
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from app import __version__
+from app.agent.approvals import MAX_REASON_CHARS, ApprovalAnswer, ApprovalMismatch
 from app.api.deps import ServicesDep, SessionDep, client_ip
 from app.artifacts import artifact_path
 from app.auth import code_is_valid, issue_token, normalize_client_id
 from app.db.analyst import fetch_catalog
 from app.db.app_store import ThreadNotFound
-from app.service.chat import ServerBusy, ThreadBusy
+from app.ratelimit import RateLimiter
+from app.security.sql_validator import MAX_SQL_CHARS
+from app.service.chat import (
+    ApprovalPending,
+    BudgetExhausted,
+    ServerBusy,
+    ThreadBusy,
+)
 from app.streaming.sse import SSE_HEADERS, sse_stream
 
 router = APIRouter(prefix="/api")
@@ -63,11 +73,24 @@ class ChatMessage(BaseModel):
     content: str | None = None
 
 
+class ApprovalIn(BaseModel):
+    """The reviewer's answer to one approval card."""
+
+    id: str = Field(min_length=1, max_length=100)
+    approved: bool
+    reason: str | None = Field(default=None, max_length=MAX_REASON_CHARS)
+    edited_query: str | None = Field(default=None, max_length=MAX_SQL_CHARS)
+
+
 class ChatRequest(BaseModel):
     model_config = ConfigDict(extra="allow")
     id: str = Field(pattern=_THREAD_ID_PATTERN)
     messages: list[ChatMessage] = Field(min_length=1, max_length=500)
     model: str | None = Field(default=None, max_length=120)
+    # The browser may make approvals stricter for its questions ("strict"), never turn them off.
+    approval_mode: Literal["normal", "strict"] | None = None
+    # Present = this request resumes a run paused for approval (no new question).
+    approvals: list[ApprovalIn] | None = Field(default=None, min_length=1, max_length=20)
 
 
 def last_user_text(request: ChatRequest) -> str:
@@ -153,49 +176,80 @@ async def create_session(
 ) -> dict[str, Any]:
     settings = services.settings
     ip = client_ip(request)
-    if not services.login_limiter.allow(ip):
-        retry = services.login_limiter.retry_after(ip)
-        raise HTTPException(
-            status_code=429, detail="Too many attempts.", headers={"Retry-After": str(retry)}
-        )
+    _limit(services.login_limiter, ip, "Too many attempts.")
     if settings.demo_access_code is None or settings.session_token_secret is None:
         raise HTTPException(status_code=503, detail="Live runs are not enabled on this server.")
     if not code_is_valid(settings, body.code):
         raise HTTPException(status_code=401, detail="Invalid access code.")
+    # Every session is a fresh daily budget, so new sessions per IP are capped too.
+    _limit(services.session_ip_limiter, ip, "Too many new sessions from this network.")
     owner = normalize_client_id(body.client_id)
     token, expires_at = issue_token(settings, owner)
     return {"token": token, "expires_at": expires_at, "client_id": owner}
 
 
 # --------------------------------------------------------------------------- authenticated
+def _limit(limiter: RateLimiter, key: str, detail: str) -> None:
+    if not limiter.allow(key):
+        raise HTTPException(
+            status_code=429, detail=detail, headers={"Retry-After": str(limiter.retry_after(key))}
+        )
+
+
 @router.post("/chat")
-async def chat(body: ChatRequest, session: SessionDep, services: ServicesDep) -> StreamingResponse:
+async def chat(
+    body: ChatRequest, request: Request, session: SessionDep, services: ServicesDep
+) -> StreamingResponse:
+    """A new question, or (with `approvals`) the reviewer's answers to a paused run."""
     settings = services.settings
-    question = last_user_text(body)
-    if not question:
-        raise HTTPException(status_code=422, detail="The message is empty.")
-    if len(question) > settings.max_question_chars:
-        raise HTTPException(
-            status_code=422,
-            detail=f"The question is too long (max {settings.max_question_chars} characters).",
-        )
-    if body.model and body.model != settings.model and body.model not in settings.allowed_models:
-        raise HTTPException(status_code=400, detail="That model is not available.")
-    if not services.chat_limiter.allow(session.owner_id):
-        retry = services.chat_limiter.retry_after(session.owner_id)
-        raise HTTPException(
-            status_code=429,
-            detail="You are sending requests too quickly.",
-            headers={"Retry-After": str(retry)},
-        )
+    resuming = body.approvals is not None
+    question = "" if resuming else last_user_text(body)
+    if not resuming:
+        if not question:
+            raise HTTPException(status_code=422, detail="The message is empty.")
+        if len(question) > settings.max_question_chars:
+            raise HTTPException(
+                status_code=422,
+                detail=f"The question is too long (max {settings.max_question_chars} characters).",
+            )
+        if (
+            body.model
+            and body.model != settings.model
+            and body.model not in settings.allowed_models
+        ):
+            raise HTTPException(status_code=400, detail="That model is not available.")
+    _limit(services.chat_limiter, session.owner_id, "You are sending requests too quickly.")
+    _limit(services.run_ip_limiter, client_ip(request), "Too many runs from this network.")
     try:
-        turn = await services.chat.prepare(
-            thread_id=body.id, owner_id=session.owner_id, question=question, model=body.model
-        )
+        if body.approvals is not None:
+            answers = [
+                ApprovalAnswer(a.id, a.approved, a.reason, a.edited_query) for a in body.approvals
+            ]
+            turn = await services.chat.prepare_resume(
+                thread_id=body.id, owner_id=session.owner_id, answers=answers
+            )
+        else:
+            turn = await services.chat.prepare(
+                thread_id=body.id,
+                owner_id=session.owner_id,
+                question=question,
+                model=body.model,
+                approval_mode=body.approval_mode,
+            )
     except ThreadNotFound as exc:
         raise HTTPException(status_code=404, detail="Thread not found.") from exc
     except ThreadBusy as exc:
         raise HTTPException(status_code=409, detail="This thread is still answering.") from exc
+    except ApprovalPending as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="A query in this conversation is waiting for your approval. Approve or "
+            "reject it first.",
+        ) from exc
+    except ApprovalMismatch as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except BudgetExhausted as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
     except ServerBusy as exc:
         raise HTTPException(
             status_code=429,

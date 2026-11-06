@@ -18,9 +18,11 @@ import {
 } from "@/components/ai-elements/prompt-input";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
+import { ApprovalBook, awaitingApproval } from "@/lib/approvals";
 import { getToken } from "@/lib/auth";
 import { API_BASE_URL } from "@/lib/config";
-import type { AnalystMessage } from "@/lib/types";
+import type { AnalystMessage, ApprovalDecision } from "@/lib/types";
+import { ApprovalContext } from "./approval-card";
 import { ArtifactPanel } from "./artifact-panel";
 import { AssistantTurn, organize } from "./assistant-turn";
 
@@ -62,6 +64,10 @@ export function ChatSession({
   onOpenMenu,
   fetchImpl,
 }: ChatSessionProps) {
+  // Read by the transport when it builds the next request (see lib/approvals.ts).
+  const [book] = useState(() => new ApprovalBook());
+  const [strict, setStrict] = useState(false);
+
   const transport = useMemo(
     () =>
       new DefaultChatTransport<AnalystMessage>({
@@ -73,22 +79,58 @@ export function ChatSession({
         },
         // The server keeps the conversation (checkpointer); sending only the newest message keeps
         // requests small and means a tampered client history cannot change what the agent sees.
-        prepareSendMessagesRequest: ({ id, messages, trigger, headers }) => ({
-          body: { id, messages: messages.slice(-1), trigger },
-          headers,
-        }),
+        prepareSendMessagesRequest: ({ id, messages, trigger, headers }) => {
+          if (messages[messages.length - 1]?.role === "assistant") {
+            const answers = book.takeAnswers(messages);
+            if (answers.length > 0)
+              // Resuming a paused run: only the decisions are sent, never the message itself.
+              return {
+                body: { id, trigger, messages: [{ role: "assistant", parts: [] }], approvals: answers },
+                headers,
+              };
+          }
+          return {
+            body: {
+              id,
+              messages: messages.slice(-1),
+              trigger,
+              ...(book.strict ? { approval_mode: "strict" } : {}),
+            },
+            headers,
+          };
+        },
       }),
-    [fetchImpl],
+    [fetchImpl, book],
   );
 
-  const { messages, sendMessage, status, stop, error, clearError } = useChat<AnalystMessage>({
-    id: threadId,
-    messages: initialMessages,
-    transport,
-    onFinish: () => onTurnFinished(),
-  });
+  const { messages, sendMessage, status, stop, error, clearError, addToolApprovalResponse } =
+    useChat<AnalystMessage>({
+      id: threadId,
+      messages: initialMessages,
+      transport,
+      onFinish: () => onTurnFinished(),
+      // Resume once every approval card in the newest message has an answer.
+      sendAutomaticallyWhen: ({ messages: current }) => book.shouldResume(current),
+    });
 
   const busy = status === "submitted" || status === "streaming";
+  const paused = awaitingApproval(messages);
+
+  const approvals = useMemo(
+    () => ({
+      enabled: !busy && signedIn,
+      decide: (approvalId: string, decision: ApprovalDecision) => {
+        if (decision.editedQuery) book.recordEdit(approvalId, decision.editedQuery);
+        clearError();
+        void addToolApprovalResponse({
+          id: approvalId,
+          approved: decision.approved,
+          reason: decision.reason,
+        });
+      },
+    }),
+    [busy, signedIn, book, clearError, addToolApprovalResponse],
+  );
   // A question typed before signing in waits here until the access code is accepted.
   const pendingQuestion = useRef<string | null>(null);
   const [filesOpen, setFilesOpen] = useState(false);
@@ -97,7 +139,7 @@ export function ChatSession({
 
   const send = useCallback(
     (text: string) => {
-      if (busy) return;
+      if (busy || paused) return;
       if (!signedIn) {
         pendingQuestion.current = text;
         onNeedSignIn();
@@ -111,7 +153,7 @@ export function ChatSession({
       clearError();
       void sendMessage({ text });
     },
-    [busy, signedIn, threadId, onNeedSignIn, clearError, sendMessage],
+    [busy, paused, signedIn, threadId, onNeedSignIn, clearError, sendMessage],
   );
 
   // ...and is sent as soon as the access code is accepted.
@@ -153,6 +195,7 @@ export function ChatSession({
           <span className="marked text-sm font-semibold">SandboxAnalyst</span>
         </header>
 
+        <ApprovalContext.Provider value={approvals}>
         <Conversation className="min-h-0 flex-1">
           <ConversationContent className="mx-auto w-full max-w-[46rem] gap-0 px-5 py-8 md:py-12">
             {empty ? (
@@ -196,6 +239,7 @@ export function ChatSession({
           </ConversationContent>
           <ConversationScrollButton />
         </Conversation>
+        </ApprovalContext.Provider>
 
         <div className="px-5 pb-5">
           <div className="mx-auto grid w-full max-w-[46rem] gap-2">
@@ -220,15 +264,31 @@ export function ChatSession({
               <PromptInputBody>
                 <PromptInputTextarea
                   placeholder={
-                    signedIn ? "Ask about revenue, customers, returns…" : "Ask a question (you will be asked for the access code)"
+                    paused
+                      ? "Approve or reject the query above to continue"
+                      : signedIn
+                        ? "Ask about revenue, customers, returns…"
+                        : "Ask a question (you will be asked for the access code)"
                   }
+                  disabled={paused}
                   maxLength={2000}
                   aria-label="Your question"
                 />
               </PromptInputBody>
               <PromptInputFooter>
-                <span className="text-xs text-muted-foreground">Enter to send. Shift+Enter for a new line.</span>
-                <PromptInputSubmit status={status} onStop={stop} />
+                <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <input
+                    type="checkbox"
+                    checked={strict}
+                    onChange={(e) => {
+                      book.setStrict(e.target.checked);
+                      setStrict(e.target.checked);
+                    }}
+                    className="size-3.5 accent-foreground"
+                  />
+                  Ask me before every query
+                </label>
+                <PromptInputSubmit status={status} onStop={stop} disabled={paused && !busy} />
               </PromptInputFooter>
             </PromptInput>
           </div>

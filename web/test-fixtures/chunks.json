@@ -227,7 +227,8 @@
     "trace_url": null,
     "empty_reply_nudges": 0,
     "unverified_file_claims": [],
-    "sql_queries": 1
+    "sql_queries": 1,
+    "approval_mode": "normal"
    }
   },
   {
@@ -465,7 +466,8 @@
     "trace_url": null,
     "empty_reply_nudges": 0,
     "unverified_file_claims": [],
-    "sql_queries": 1
+    "sql_queries": 1,
+    "approval_mode": "normal"
    }
   },
   {
@@ -541,7 +543,237 @@
     "trace_url": null,
     "empty_reply_nudges": 0,
     "unverified_file_claims": [],
-    "sql_queries": 1
+    "sql_queries": 1,
+    "approval_mode": "normal"
+   }
+  },
+  {
+   "type": "finish-step"
+  },
+  {
+   "type": "finish"
+  }
+ ],
+ "approval_paused": [
+  {
+   "type": "start",
+   "messageId": "msg-contract"
+  },
+  {
+   "type": "start-step"
+  },
+  {
+   "type": "tool-input-start",
+   "toolCallId": "c-sql",
+   "toolName": "run_sql"
+  },
+  {
+   "type": "tool-input-available",
+   "toolCallId": "c-sql",
+   "toolName": "run_sql",
+   "input": {
+    "query": "SELECT * FROM analytics.orders",
+    "output_file": "orders.csv"
+   }
+  },
+  {
+   "type": "tool-approval-request",
+   "approvalId": "approval-1",
+   "toolCallId": "c-sql",
+   "reason": "Flagged for review: returns raw rows of analytics.orders"
+  },
+  {
+   "type": "data-artifacts",
+   "id": "artifacts",
+   "data": {
+    "items": [
+     {
+      "name": "chart.png",
+      "mime": "image/png",
+      "size": 1234,
+      "url": "/api/threads/t/artifacts/chart.png"
+     }
+    ]
+   }
+  },
+  {
+   "type": "data-run",
+   "id": "run",
+   "data": {
+    "status": "awaiting_approval",
+    "model": "openai.gpt-oss-120b",
+    "provider": "bedrock-openai",
+    "usage": {
+     "llm_calls": 6,
+     "input_tokens": 41000,
+     "output_tokens": 900,
+     "total_tokens": 41900,
+     "models": [
+      "openai.gpt-oss-120b"
+     ],
+     "cost_usd": null,
+     "calls_without_usage": 0
+    },
+    "seconds": 29.1,
+    "trace_url": null,
+    "empty_reply_nudges": 0,
+    "unverified_file_claims": [],
+    "sql_queries": 1,
+    "approval_mode": "normal"
+   }
+  },
+  {
+   "type": "finish-step"
+  },
+  {
+   "type": "finish"
+  }
+ ],
+ "approval_resumed_approved": [
+  {
+   "type": "start"
+  },
+  {
+   "type": "start-step"
+  },
+  {
+   "type": "tool-approval-response",
+   "approvalId": "approval-1",
+   "approved": true
+  },
+  {
+   "type": "tool-output-available",
+   "toolCallId": "c-sql",
+   "output": "OK: 10,000 rows"
+  },
+  {
+   "type": "text-start",
+   "id": "text-1"
+  },
+  {
+   "type": "text-delta",
+   "id": "text-1",
+   "delta": "Done."
+  },
+  {
+   "type": "text-end",
+   "id": "text-1"
+  },
+  {
+   "type": "data-artifacts",
+   "id": "artifacts",
+   "data": {
+    "items": [
+     {
+      "name": "chart.png",
+      "mime": "image/png",
+      "size": 1234,
+      "url": "/api/threads/t/artifacts/chart.png"
+     }
+    ]
+   }
+  },
+  {
+   "type": "data-run",
+   "id": "run",
+   "data": {
+    "status": "ok",
+    "model": "openai.gpt-oss-120b",
+    "provider": "bedrock-openai",
+    "usage": {
+     "llm_calls": 6,
+     "input_tokens": 41000,
+     "output_tokens": 900,
+     "total_tokens": 41900,
+     "models": [
+      "openai.gpt-oss-120b"
+     ],
+     "cost_usd": null,
+     "calls_without_usage": 0
+    },
+    "seconds": 29.1,
+    "trace_url": null,
+    "empty_reply_nudges": 0,
+    "unverified_file_claims": [],
+    "sql_queries": 1,
+    "approval_mode": "normal"
+   }
+  },
+  {
+   "type": "finish-step"
+  },
+  {
+   "type": "finish"
+  }
+ ],
+ "approval_resumed_rejected": [
+  {
+   "type": "start"
+  },
+  {
+   "type": "start-step"
+  },
+  {
+   "type": "tool-approval-response",
+   "approvalId": "approval-1",
+   "approved": false,
+   "reason": "Too big"
+  },
+  {
+   "type": "tool-output-denied",
+   "toolCallId": "c-sql"
+  },
+  {
+   "type": "text-start",
+   "id": "text-1"
+  },
+  {
+   "type": "text-delta",
+   "id": "text-1",
+   "delta": "Understood."
+  },
+  {
+   "type": "text-end",
+   "id": "text-1"
+  },
+  {
+   "type": "data-artifacts",
+   "id": "artifacts",
+   "data": {
+    "items": [
+     {
+      "name": "chart.png",
+      "mime": "image/png",
+      "size": 1234,
+      "url": "/api/threads/t/artifacts/chart.png"
+     }
+    ]
+   }
+  },
+  {
+   "type": "data-run",
+   "id": "run",
+   "data": {
+    "status": "ok",
+    "model": "openai.gpt-oss-120b",
+    "provider": "bedrock-openai",
+    "usage": {
+     "llm_calls": 6,
+     "input_tokens": 41000,
+     "output_tokens": 900,
+     "total_tokens": 41900,
+     "models": [
+      "openai.gpt-oss-120b"
+     ],
+     "cost_usd": null,
+     "calls_without_usage": 0
+    },
+    "seconds": 29.1,
+    "trace_url": null,
+    "empty_reply_nudges": 0,
+    "unverified_file_claims": [],
+    "sql_queries": 1,
+    "approval_mode": "normal"
    }
   },
   {

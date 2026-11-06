@@ -1,8 +1,8 @@
-# SandboxAnalyst
+﻿# SandboxAnalyst
 
-Ask a business question in plain English; a deep agent plans the work, runs **read-only SQL** against Postgres through a hardened tool, analyses the results in an **isolated E2B sandbox**, and returns a report with charts, the SQL used and its assumptions — with every step traced and evaluated.
+Ask a business question in plain English; a deep agent plans the work, runs **read-only SQL** against Postgres through a hardened tool, analyses the results in an **isolated E2B sandbox**, and returns a report with charts, the SQL used and its assumptions â€” with every step traced and evaluated.
 
-> Status: **M2 – agent core done** (M0 scaffolding, M1 Neon roles + seeded dataset, M2 CLI agent). M3 (streaming API) done. Next: M4 frontend. Results, demo link and architecture diagram will be added as they are measured/built. No numbers in this README are claimed until an eval run produces them.
+> Status: **M2 â€“ agent core done** (M0 scaffolding, M1 Neon roles + seeded dataset, M2 CLI agent). M3 (streaming API) done. Next: M4 frontend. Results, demo link and architecture diagram will be added as they are measured/built. No numbers in this README are claimed until an eval run produces them.
 
 ## Quick start (backend)
 
@@ -51,6 +51,8 @@ uv run python -m app.serve --port 8000     # on Windows this selects the event l
 
 Live runs need `DEMO_ACCESS_CODE` and `SESSION_TOKEN_SECRET` in `.env`; without them login is disabled.
 
+`POST /api/chat` also resumes a run paused for human approval: send `approvals: [{id, approved, reason?, edited_query?}]` instead of a new question (see ADR-022). Measure prompt-injection resistance with `uv run python -m evals.injection` (costs tokens).
+
 ## Checks
 
 ```bash
@@ -61,3 +63,4 @@ uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run pyt
 
 - [Project brief](docs/brief.md)
 - [Architecture decisions](docs/decisions.md)
+- [Security: threat model, defences, measured results, known limits](SECURITY.md)

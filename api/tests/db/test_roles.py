@@ -139,6 +139,24 @@ def test_app_role_cannot_touch_analytics(app: psycopg.Connection) -> None:
 
 
 @skip_without_db
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "UPDATE app.usage_ledger SET total_tokens = 0",
+        "DELETE FROM app.usage_ledger",
+        "TRUNCATE app.usage_ledger",
+    ],
+)
+def test_the_usage_ledger_is_append_only_for_the_app(
+    app: psycopg.Connection, statement: str
+) -> None:
+    """Budgets read this ledger, so the app (and anything that takes it over) cannot rewrite it."""
+    with pytest.raises(errors.InsufficientPrivilege):
+        app.execute(statement)
+    assert app.execute("SELECT count(*) FROM app.usage_ledger").fetchone() is not None
+
+
+@skip_without_db
 def test_app_role_can_use_its_own_schema(app: psycopg.Connection) -> None:
     app.execute("CREATE TABLE app._probe (x int)")
     try:

@@ -21,8 +21,10 @@ class Services:
     store: AppStore
     sandboxes: SandboxManager
     chat: ChatService
-    login_limiter: RateLimiter = field(default_factory=lambda: RateLimiter(5))
-    chat_limiter: RateLimiter = field(default_factory=lambda: RateLimiter(10))
+    login_limiter: RateLimiter = field(default_factory=lambda: RateLimiter(5))  # per IP, minute
+    chat_limiter: RateLimiter = field(default_factory=lambda: RateLimiter(10))  # per session, min
+    run_ip_limiter: RateLimiter = field(default_factory=lambda: RateLimiter(20, 3600))  # per IP, h
+    session_ip_limiter: RateLimiter = field(default_factory=lambda: RateLimiter(10, 3600))
 
 
 def get_services(request: Request) -> Services:

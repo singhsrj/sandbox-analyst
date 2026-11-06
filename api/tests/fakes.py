@@ -9,7 +9,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-from langchain_core.messages import AIMessage, messages_from_dict
+from langchain_core.messages import AIMessage, ToolMessage, messages_from_dict
+from langgraph.types import Command, Interrupt
 
 from app.db.app_store import ThreadInfo, ThreadNotFound
 from app.db.app_store import _title as make_title
@@ -55,10 +56,15 @@ class FakeAgent:
         self._empty_first = empty_first
         self.calls = 0
         self.inputs: list[str] = []
+        self.resumes: list[Any] = []
 
     async def astream(self, payload: Any, config: Any, stream_mode: Any) -> AsyncIterator[Any]:
         self.calls += 1
-        self.inputs.append(payload["messages"][0].content)
+        if isinstance(payload, Command):
+            self.resumes.append(payload.resume)
+            self.inputs.append("<resume>")
+        else:
+            self.inputs.append(payload["messages"][0].content)
         for index, event in enumerate(self._events):
             if self._raise_after is not None and index >= self._raise_after and self._error:
                 raise self._error
@@ -66,7 +72,62 @@ class FakeAgent:
 
     async def aget_state(self, config: Any) -> Any:
         text = "" if (self._empty_first and self.calls == 1) else self._final
-        return SimpleNamespace(values={"messages": [AIMessage(text)]})
+        return SimpleNamespace(values={"messages": [AIMessage(text)]}, interrupts=())
+
+
+class PausingAgent(FakeAgent):
+    """First call: shows a run_sql call and pauses for approval. A resume finishes the run."""
+
+    QUERY = "SELECT * FROM analytics.orders"
+
+    def __init__(self, final_text: str = "Answer after approval.") -> None:
+        super().__init__([], final_text)
+        self.interrupt = Interrupt(
+            value={
+                "type": "tool_approval",
+                "tool_call_id": "call-sql-1",
+                "name": "run_sql",
+                "args": {"query": self.QUERY, "output_file": "orders.csv"},
+                "description": "Flagged for review: returns raw rows of analytics.orders",
+            },
+            id="intr-1",
+        )
+
+    async def astream(self, payload: Any, config: Any, stream_mode: Any) -> AsyncIterator[Any]:
+        self.calls += 1
+        if isinstance(payload, Command):
+            resume: dict[str, Any] = dict(payload.resume or {})
+            self.resumes.append(resume)
+            decision = resume["intr-1"]
+            if decision["type"] == "reject":
+                content, status = "User rejected the tool call.", "error"
+            else:
+                content, status = "OK: 10,000 rows", "success"
+            yield (
+                "updates",
+                {
+                    "tools": {
+                        "messages": [
+                            ToolMessage(
+                                content, tool_call_id="call-sql-1", name="run_sql", status=status
+                            )
+                        ]
+                    }
+                },
+            )
+            yield ("updates", {"model": {"messages": [AIMessage(self._final, id="final")]}})
+            return
+        self.inputs.append(payload["messages"][0].content)
+        call = {"name": "run_sql", "args": self.interrupt.value["args"], "id": "call-sql-1"}
+        yield ("updates", {"model": {"messages": [AIMessage("", tool_calls=[call], id="m1")]}})
+        yield ("updates", {"__interrupt__": (self.interrupt,)})
+
+    async def aget_state(self, config: Any) -> Any:
+        paused = not self.resumes
+        messages = [AIMessage("" if paused else self._final)]
+        return SimpleNamespace(
+            values={"messages": messages}, interrupts=(self.interrupt,) if paused else ()
+        )
 
 
 class FakeSandboxes:
@@ -86,6 +147,7 @@ class FakeStore:
     threads: dict[str, dict[str, Any]] = field(default_factory=dict)
     runs: list[dict[str, Any]] = field(default_factory=list)
     sandbox_ids: dict[str, str] = field(default_factory=dict)
+    usage: list[tuple[str, int]] = field(default_factory=list)
 
     async def ensure_thread(self, thread_id: str, owner_id: str, question: str) -> ThreadInfo:
         row = self.threads.setdefault(thread_id, {"owner": owner_id, "title": make_title(question)})
@@ -121,6 +183,24 @@ class FakeStore:
     async def save_run(self, **kwargs: Any) -> str:
         self.runs.append(kwargs)
         return f"run-{len(self.runs)}"
+
+    async def last_run(self, thread_id: str) -> dict[str, Any] | None:
+        mine = [(i, r) for i, r in enumerate(self.runs, 1) if r["thread_id"] == thread_id]
+        if not mine:
+            return None
+        index, run = mine[-1]
+        return {
+            "run_id": f"run-{index}",
+            "question": run["question"],
+            "status": run["status"],
+            "summary": run["summary"],
+        }
+
+    async def record_usage(self, *, owner_id: str, thread_id: str, total_tokens: int) -> None:
+        self.usage.append((owner_id, total_tokens))
+
+    async def tokens_used_last_day(self, owner_id: str | None = None) -> int:
+        return sum(t for o, t in self.usage if owner_id is None or o == owner_id)
 
     async def list_runs(self, thread_id: str, owner_id: str) -> list[dict[str, Any]]:
         await self.get_thread(thread_id, owner_id)

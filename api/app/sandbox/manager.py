@@ -5,6 +5,8 @@ Security posture of every sandbox (the code inside is model-written, i.e. untrus
   * no secrets: nothing from our environment is passed in (`envs` is never set)
   * short lifetime: the E2B-side timeout kills it even if our process dies
   * per-command timeout: runaway loops are killed, the sandbox stays usable
+  * process limit and output cap per command; a sandbox that stops answering is replaced
+    (app/sandbox/e2b_backend.py)
   * template `code-interpreter-v1` ships pandas/matplotlib/numpy/scipy, so no network is needed
 
 Lifecycle: created on the first message of a thread (never when merely viewing it), reused for
@@ -52,10 +54,16 @@ class SandboxManager:
             existing = self._sandboxes.get(thread_id)
             if existing is not None:
                 raw, backend = existing
-                if await raw.is_running():
+                if backend.unhealthy:  # e.g. wedged by a fork bomb: replace it
+                    logger.warning("replacing unhealthy sandbox id=%s", raw.sandbox_id)
+                    self._sandboxes.pop(thread_id, None)
+                    await _kill(raw)
+                    known_sandbox_id = None  # do not reconnect to the broken one
+                elif await raw.is_running():
                     await raw.set_timeout(self._settings.sandbox_timeout_seconds)
                     return backend
-                self._sandboxes.pop(thread_id, None)  # expired: fall through and recreate
+                else:
+                    self._sandboxes.pop(thread_id, None)  # expired: fall through and recreate
             reconnected = await self._reconnect(known_sandbox_id) if known_sandbox_id else None
             if reconnected is not None:
                 raw = reconnected

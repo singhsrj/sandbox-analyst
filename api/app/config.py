@@ -19,6 +19,7 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 ModelProvider = Literal["bedrock-openai", "groq", "ollama"]
+ApprovalMode = Literal["off", "normal", "strict"]
 CsvList = Annotated[list[str], NoDecode]
 
 
@@ -89,11 +90,18 @@ class Settings(BaseSettings):
     max_tool_output_chars: int = Field(default=4_000, ge=200)
     max_tokens_per_request: int = Field(default=300_000, ge=1_000)
     max_cost_usd_per_request: float = Field(default=0.10, gt=0)
-    max_cost_usd_per_session: float = Field(default=0.50, gt=0)
-    rate_limit_per_minute: int = Field(default=10, ge=1)
+    # Rolling 24 h token budgets, from app.usage_ledger (survives thread deletion and restarts).
+    max_tokens_per_owner_per_day: int = Field(default=2_000_000, ge=1_000)
+    max_tokens_per_day: int = Field(default=8_000_000, ge=1_000)
+    rate_limit_per_minute: int = Field(default=10, ge=1)  # chat requests per session
+    runs_per_ip_per_hour: int = Field(default=20, ge=1)
+    sessions_per_ip_per_hour: int = Field(default=10, ge=1)
     login_attempts_per_minute: int = Field(default=5, ge=1)
     max_concurrent_runs: int = Field(default=3, ge=1)
     max_question_chars: int = Field(default=2_000, ge=10)
+
+    # --- human approval (ADR-022) ---
+    approval_mode: ApprovalMode = "normal"
 
     @field_validator("cors_allow_origins", "fallback_models", "allowed_models", mode="before")
     @classmethod

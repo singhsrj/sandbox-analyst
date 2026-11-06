@@ -7,7 +7,9 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.runnables import RunnableConfig
+from langgraph.types import Command
 
+from app.agent.approvals import PendingApproval, pending_from_interrupts
 from app.streaming.adapter import message_text
 
 MAX_EMPTY_NUDGES = 2
@@ -18,31 +20,48 @@ EMPTY_REPLY_NUDGE = (
 
 
 class AgentDriver:
-    """Streams `(mode, payload)` events for one user turn.
+    """Streams `(mode, payload)` events for one user turn (or for resuming a paused one).
 
     Open-weight models sometimes end a turn with an empty message. We nudge them (at most
     `MAX_EMPTY_NUDGES` times) and count it, because it is a real failure mode worth measuring.
-    After `events()` is exhausted, `final_answer` and `nudges` are set.
+    After `events()` is exhausted, `final_answer`, `nudges` and `pending` are set; a non-empty
+    `pending` means the run is paused, waiting for a human to approve a query.
     """
 
-    def __init__(self, agent: Any, config: RunnableConfig, question: str) -> None:
+    def __init__(
+        self,
+        agent: Any,
+        config: RunnableConfig,
+        question: str,
+        *,
+        resume: dict[str, Any] | None = None,
+    ) -> None:
         self._agent = agent
         self._config = config
         self._question = question
+        self._resume = resume
         self.final_answer = ""
         self.nudges = 0
         self.final_message_meta: dict[str, Any] = {}
+        self.pending: list[PendingApproval] = []
 
     async def events(self) -> AsyncIterator[tuple[str, Any]]:
-        next_input = self._question
+        next_input: Any = (
+            Command(resume=self._resume)
+            if self._resume is not None
+            else {"messages": [HumanMessage(self._question)]}
+        )
         while True:
             async for event in self._agent.astream(
-                {"messages": [HumanMessage(next_input)]},
+                next_input,
                 self._config,
                 stream_mode=["messages", "updates"],
             ):
                 yield event
             state = await self._agent.aget_state(self._config)
+            self.pending = pending_from_interrupts(getattr(state, "interrupts", ()))
+            if self.pending:
+                return  # paused for approval; not an empty reply
             messages = state.values.get("messages", [])
             last_ai = next((m for m in reversed(messages) if isinstance(m, AIMessage)), None)
             self.final_answer = message_text(last_ai).strip() if last_ai else ""
@@ -56,4 +75,4 @@ class AgentDriver:
             if self.final_answer or self.nudges >= MAX_EMPTY_NUDGES:
                 return
             self.nudges += 1
-            next_input = EMPTY_REPLY_NUDGE
+            next_input = {"messages": [HumanMessage(EMPTY_REPLY_NUDGE)]}

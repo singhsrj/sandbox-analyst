@@ -1,7 +1,15 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ACCESS_CODE, TOKEN, createFakeApi, type FakeApiOptions } from "@/test-utils/fake-api";
+import {
+  ACCESS_CODE,
+  TOKEN,
+  approvalApproved,
+  approvalPaused,
+  approvalRejected,
+  createFakeApi,
+  type FakeApiOptions,
+} from "@/test-utils/fake-api";
 import { Workspace } from "../workspace";
 
 vi.mock("@/components/ai-elements/code-block", () => ({
@@ -139,6 +147,80 @@ describe("Workspace", () => {
     expect(alert).toHaveTextContent("The server is busy. Try again shortly.");
     await user.click(within(alert).getByRole("button", { name: /dismiss/i }));
     expect(screen.queryByText(/server is busy/i)).not.toBeInTheDocument();
+  });
+
+  describe("human approval", () => {
+    async function askAndPause(user: ReturnType<typeof userEvent.setup>, resume = approvalApproved) {
+      mount({ chatSequence: [approvalPaused, resume] });
+      await user.click(await screen.findByRole("button", { name: /why did revenue drop/i }));
+      await signIn(user);
+      return within(await screen.findByRole("region", { name: /approval needed/i }));
+    }
+
+    it("a flagged query waits for approval and the composer is locked meanwhile", async () => {
+      const user = userEvent.setup();
+      const card = await askAndPause(user);
+      expect(card.getByText(/raw rows of analytics\.orders/i)).toBeInTheDocument();
+      expect(screen.getByLabelText("Your question")).toBeDisabled();
+      expect(screen.getByText(/paused: a query above is waiting/i)).toBeInTheDocument();
+      expect(chatRequests()).toHaveLength(1);
+    });
+
+    it("approving resumes the run with only the decision, then shows the answer", async () => {
+      const user = userEvent.setup();
+      const card = await askAndPause(user);
+      await user.click(card.getByRole("button", { name: /run query/i }));
+
+      await waitFor(() => expect(chatRequests()).toHaveLength(2));
+      const body = chatRequests()[1].body as Record<string, unknown>;
+      expect(body.approvals).toEqual([{ id: "approval-1", approved: true }]);
+      expect(body.messages).toEqual([{ role: "assistant", parts: [] }]); // no client history
+
+      expect(await screen.findByTestId("answer")).toHaveTextContent("Done.");
+      expect(screen.queryByRole("region", { name: /approval needed/i })).not.toBeInTheDocument();
+      expect(screen.getByText(/you approved this query/i)).toBeInTheDocument();
+      expect(screen.getByLabelText("Your question")).not.toBeDisabled();
+    });
+
+    it("an edited query is sent with the approval", async () => {
+      const user = userEvent.setup();
+      const card = await askAndPause(user);
+      await user.click(card.getByRole("button", { name: /edit sql/i }));
+      const editor = card.getByLabelText(/edit the sql/i);
+      await user.clear(editor);
+      await user.type(editor, "SELECT * FROM analytics.orders LIMIT 100");
+      await user.click(card.getByRole("button", { name: /run edited query/i }));
+
+      await waitFor(() => expect(chatRequests()).toHaveLength(2));
+      expect((chatRequests()[1].body as Record<string, unknown>).approvals).toEqual([
+        { id: "approval-1", approved: true, edited_query: "SELECT * FROM analytics.orders LIMIT 100" },
+      ]);
+    });
+
+    it("rejecting sends the reason and shows the query as not run", async () => {
+      const user = userEvent.setup();
+      const card = await askAndPause(user, approvalRejected);
+      await user.click(card.getByRole("button", { name: /^reject$/i }));
+      await user.type(card.getByLabelText(/why\?/i), "Too big");
+      await user.click(card.getByRole("button", { name: /reject query/i }));
+
+      await waitFor(() => expect(chatRequests()).toHaveLength(2));
+      expect((chatRequests()[1].body as Record<string, unknown>).approvals).toEqual([
+        { id: "approval-1", approved: false, reason: "Too big" },
+      ]);
+      expect(await screen.findByText(/query not run/i)).toBeInTheDocument();
+      expect(screen.getByText(/you rejected this query: “too big”/i)).toBeInTheDocument();
+    });
+
+    it("strict mode is sent with the next question", async () => {
+      const user = userEvent.setup();
+      mount();
+      await user.click(await screen.findByRole("checkbox", { name: /ask me before every query/i }));
+      await user.click(await screen.findByRole("button", { name: /why did revenue drop/i }));
+      await signIn(user);
+      await waitFor(() => expect(chatRequests()).toHaveLength(1));
+      expect((chatRequests()[0].body as Record<string, unknown>).approval_mode).toBe("strict");
+    });
   });
 
   it("the access token is kept for the tab (sessionStorage) but never in localStorage", async () => {

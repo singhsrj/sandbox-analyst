@@ -15,6 +15,25 @@ export type SqlOutput =
 
 const OK_LINE = /^OK: ([\d,]+) rows x (\d+) columns saved to (\S+)/;
 
+const EDIT_NOTICE = /^Note: a human reviewer replaced this tool call[\s\S]*?Executed instead: \S+ with arguments (\{[\s\S]*?\})\.(?:\n\nTool response:\n?)?/;
+
+/**
+ * When a reviewer edited a query, LangChain prefixes the tool result with a notice naming the call
+ * that really ran. Split it off so the result parses normally, and return the SQL that executed.
+ */
+export function splitEditNotice(text: string): { executedQuery: string | null; rest: string } {
+  const match = EDIT_NOTICE.exec(text);
+  if (!match) return { executedQuery: null, rest: text };
+  let executedQuery: string | null = null;
+  try {
+    const args = JSON.parse(match[1]) as { query?: unknown };
+    if (typeof args.query === "string") executedQuery = args.query;
+  } catch {
+    /* unexpected shape: still strip the notice */
+  }
+  return { executedQuery, rest: text.slice(match[0].length) };
+}
+
 export function parseSqlOutput(text: string): SqlOutput {
   const trimmed = text.trim();
   for (const [prefix, kind] of [

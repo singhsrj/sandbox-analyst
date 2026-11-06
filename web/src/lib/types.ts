@@ -12,8 +12,10 @@ export interface ArtifactItem {
   url: string; // path on the API, requires the bearer token
 }
 
+export type ApprovalMode = "off" | "normal" | "strict";
+
 export interface RunInfo {
-  status: "ok" | "error" | "budget_exceeded" | "step_limit" | "aborted" | string;
+  status: "ok" | "error" | "budget_exceeded" | "step_limit" | "aborted" | "awaiting_approval" | string;
   model: string;
   provider: string;
   seconds: number;
@@ -21,6 +23,7 @@ export interface RunInfo {
   sql_queries: number;
   empty_reply_nudges: number;
   unverified_file_claims: string[];
+  approval_mode: ApprovalMode | string;
   usage: {
     llm_calls: number;
     input_tokens: number;
@@ -42,6 +45,7 @@ export function normalizeRun(raw: Partial<RunInfo> | undefined | null): RunInfo 
     sql_queries: raw.sql_queries ?? 0,
     empty_reply_nudges: raw.empty_reply_nudges ?? 0,
     unverified_file_claims: Array.isArray(raw.unverified_file_claims) ? raw.unverified_file_claims : [],
+    approval_mode: raw.approval_mode ?? "off",
     usage: {
       llm_calls: raw.usage?.llm_calls ?? 0,
       input_tokens: raw.usage?.input_tokens ?? 0,
@@ -76,6 +80,16 @@ export interface StoredRun {
   final_answer: string;
   chunks: Array<Record<string, unknown>>;
   created_at: string;
+  /** `resumes`: this run continued the previous run's message after a human approval. */
+  summary?: { resumes?: boolean } & Record<string, unknown>;
+}
+
+/** What the reviewer decided on an approval card. */
+export interface ApprovalDecision {
+  approved: boolean;
+  reason?: string;
+  /** Set when the reviewer changed the SQL before approving it. */
+  editedQuery?: string;
 }
 
 export interface SchemaColumn {
