@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { MessageResponse } from "@/components/ai-elements/message";
 import { Button } from "@/components/ui/button";
 import { fetchArtifact } from "@/lib/api";
-import { formatBytes, formatCount, formatSeconds } from "@/lib/format";
+import { formatBytes, formatCount, formatSeconds, replaceSandboxImages } from "@/lib/format";
 import { parseCsv } from "@/lib/parse";
 import type { ArtifactItem, RunInfo } from "@/lib/types";
 import { ResultTable } from "./tool-steps";
@@ -102,7 +102,7 @@ function FilePreview({ item, loaded }: { item: ArtifactItem; loaded: Loaded }) {
   if (ext === "md" && loaded.text !== null) {
     return (
       <div className="max-h-[28rem] overflow-auto p-3 text-sm leading-6">
-        <MessageResponse>{loaded.text}</MessageResponse>
+        <MessageResponse>{replaceSandboxImages(loaded.text)}</MessageResponse>
       </div>
     );
   }

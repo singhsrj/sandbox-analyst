@@ -32,3 +32,20 @@ const ANSI = /\u001b\[[0-9;?]*[ -/]*[@-~]/g;
 export function stripAnsi(text: string): string {
   return text.replace(ANSI, "");
 }
+
+const MARKDOWN_IMAGE = /!\[([^\]]*)\]\(\s*<?([^)\s>]+)>?(?:\s+"[^"]*")?\s*\)/g;
+
+/**
+ * Agents embed charts with sandbox paths ("![chart](/home/user/outputs/x.png)") or bare file
+ * names. Those paths only exist inside the sandbox, so the browser would request them from this
+ * site and show a broken image (found on the live deployment). Charts are shown in the Files
+ * panel, so such references become a short pointer there. Absolute http(s) images are left alone.
+ */
+export function replaceSandboxImages(markdown: string): string {
+  return markdown.replace(MARKDOWN_IMAGE, (whole, alt: string, src: string) => {
+    if (/^(https?:|data:)/i.test(src)) return whole;
+    const name = src.split("/").filter(Boolean).pop() ?? src;
+    const label = alt.trim() || name;
+    return `*(${label}: see ${name} in Files)*`;
+  });
+}

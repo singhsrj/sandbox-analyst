@@ -28,6 +28,8 @@ const page = await context.newPage();
 page.on("console", (m) => m.type() === "error" && problems.push(`console: ${m.text().slice(0, 200)}`));
 page.on("pageerror", (e) => problems.push(`pageerror: ${String(e).slice(0, 200)}`));
 page.on("requestfailed", (r) => problems.push(`requestfailed: ${r.url().slice(0, 100)} ${r.failure()?.errorText}`));
+// the console message for a failed load has no URL; record it from the response instead
+page.on("response", (r) => r.status() >= 400 && problems.push(`http ${r.status()}: ${r.request().method()} ${r.url().slice(0, 120)}`));
 
 const shot = (name) => page.screenshot({ path: path.join(SHOTS, `${name}.png`), fullPage: false });
 

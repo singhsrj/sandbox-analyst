@@ -6,7 +6,7 @@ import type { ReactNode } from "react";
 import { MessageResponse } from "@/components/ai-elements/message";
 import { Shimmer } from "@/components/ai-elements/shimmer";
 import { Button } from "@/components/ui/button";
-import { formatCount, formatSeconds } from "@/lib/format";
+import { formatCount, formatSeconds, replaceSandboxImages } from "@/lib/format";
 import { normalizeRun, type AnalystMessage, type ArtifactItem, type RunInfo, type TodoItem } from "@/lib/types";
 import { TrailStep, ToolStep, type ToolPartLike } from "./tool-steps";
 
@@ -145,7 +145,7 @@ export function AssistantTurn({ message, streaming, selected, onShowFiles }: Ass
 
       {answer ? (
         <div className="answer max-w-[68ch] text-[15px] leading-7" data-testid="answer">
-          <MessageResponse isAnimating={streaming}>{answer}</MessageResponse>
+          <MessageResponse isAnimating={streaming}>{replaceSandboxImages(answer)}</MessageResponse>
         </div>
       ) : null}
 
