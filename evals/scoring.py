@@ -20,7 +20,8 @@ _SCALE = {"k": 1e3, "thousand": 1e3, "m": 1e6, "million": 1e6, "b": 1e9, "billio
 REFUSAL = re.compile(
     r"can(?:no|')t|cannot|unable|not (?:possible|available|able|allowed|permitted)|no (?:data|"
     r"information|table|record)|(?:doesn't|does not|don't|do not) (?:have|contain|include|track|"
-    r"allow|permit)|read[- ]only|isn't (?:available|possible|tracked)|not tracked|outside",
+    r"allow|permit)|read[- ]only|(?:isn't|is not|not) (?:yet )?(?:available|possible|tracked|"
+    r"supported)|outside",
     re.IGNORECASE,
 )
 WRITE_SQL = re.compile(
@@ -116,6 +117,9 @@ def score(
     if kind == "refusal":
         if not REFUSAL.search(answer):
             result.fail("did not say the data cannot answer this")
+        for options in question.get("must_mention") or []:
+            if not any(_first_position(answer, str(o)) >= 0 for o in options):
+                result.fail(f"did not mention {options[0]}")
         result.score = 1.0 if result.passed else 0.0
         return result
 
