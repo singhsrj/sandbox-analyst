@@ -129,3 +129,10 @@ Short ADRs. Each: context → decision → consequences. Newest at the bottom.
 - **Host name:** DuckDNS, because it is on the Public Suffix List (its own Let's Encrypt rate limit); `sslip.io` is not and shares one limit across all users.
 - **Not chosen:** App Runner or ECS (more moving parts and cost for one container); a Vercel rewrite to a plain-HTTP API (bearer tokens would travel unencrypted between Vercel and the server).
 - **Least privilege:** the server has no admin database credentials; secrets only in `deploy/.env` (mode 600), never in the image.
+
+## ADR-027: Infrastructure as code, two stages
+- **Decision:** Terraform in `infra/`. `bootstrap/` runs once in AWS CloudShell as the account owner (no admin access keys are ever created) and makes a least-privilege deployer IAM user plus the cost alarm. `server/` runs on the operator machine as that user and creates the server.
+- **Deployer policy:** EC2 only, only in ap-south-1, `RunInstances` only for t4g.small (supporting resources listed by type: a wildcard ARN would have matched instances and silently bypassed the type rule, caught in review), stop/terminate only instances tagged `project=sandbox-analyst`, read Canonical's AMI parameters.
+- **No secrets in Terraform:** not as variables, not in user data, no access key resources (the key is created in the console so its secret is never in state). `deploy/.env` is copied over SSH.
+- **Server hardening:** IMDSv2 required, encrypted disk, SSH only from the operator's IP, unattended security upgrades, the AMI pinned after launch (`ignore_changes`) so a new Ubuntu build cannot replace the running server.
+- Provider pinned to an exact version at least two weeks old (6.69.1); the lock file carries Windows, Linux and macOS checksums so CloudShell and the operator machine resolve the same provider.

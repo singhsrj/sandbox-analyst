@@ -21,3 +21,10 @@ runs/
 *.log
 *.tmp
 !deploy/.env.production.example
+
+# Terraform: state may hold resource details; local settings stay local
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+crash.log
