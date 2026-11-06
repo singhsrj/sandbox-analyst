@@ -17,6 +17,7 @@ from app.config import Settings, get_settings
 from app.db.app_store import AppStore, make_pool
 from app.observability import init_langfuse
 from app.ratelimit import RateLimiter
+from app.replays import ReplayStore
 from app.sandbox.manager import SandboxManager
 from app.service.chat import ChatService
 
@@ -43,6 +44,7 @@ async def open_services(settings: Settings) -> AsyncIterator[Services]:
             chat_limiter=RateLimiter(settings.rate_limit_per_minute),
             run_ip_limiter=RateLimiter(settings.runs_per_ip_per_hour, 3600),
             session_ip_limiter=RateLimiter(settings.sessions_per_ip_per_hour, 3600),
+            replays=ReplayStore(settings.replays_dir),
         )
         try:
             yield services

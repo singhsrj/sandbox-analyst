@@ -13,6 +13,41 @@ export const approvalApproved = runs.approval_resumed_approved;
 export const approvalRejected = runs.approval_resumed_rejected;
 
 export const ACCESS_CODE = "open-sesame";
+
+export const REPLAY_SUMMARY = {
+  id: "cancelled-orders",
+  title: "How many orders were cancelled in 2025?",
+  question: "How many orders were cancelled in 2025?",
+  recorded_at: "2026-11-06",
+  model: "openai.gpt-oss-120b",
+  verified: "1,086 matches the database",
+};
+// The real recorded run, with its file links pointing at the public replay URLs (as exported).
+const replayRun = {
+  run_id: "r1",
+  question: REPLAY_SUMMARY.question,
+  status: "ok",
+  model: REPLAY_SUMMARY.model,
+  final_answer: "",
+  created_at: "2026-11-06T10:00:00Z",
+  summary: { resumes: false },
+  chunks: realRunPublic(),
+};
+function realRunPublic(): Chunk[] {
+  return runs.real_run.map((c) =>
+    c.type === "data-artifacts"
+      ? {
+          ...c,
+          data: {
+            items: (c.data as { items: { name: string }[] }).items.map((i) => ({
+              ...i,
+              url: `/api/replays/cancelled-orders/files/${i.name}`,
+            })),
+          },
+        }
+      : c,
+  );
+}
 export const TOKEN = "tok-abc.sig-xyz";
 
 export function sseBody(chunks: Chunk[]): ReadableStream<Uint8Array> {
@@ -42,6 +77,8 @@ export interface FakeApiOptions {
   chatStatus?: { status: number; detail: string };
   threads?: unknown[];
   schemaFails?: boolean;
+  /** Recorded runs served by GET /api/replays (public). */
+  replays?: boolean;
 }
 
 export function createFakeApi(options: FakeApiOptions = {}) {
@@ -72,6 +109,9 @@ export function createFakeApi(options: FakeApiOptions = {}) {
         ],
       });
     }
+    if (url.pathname === "/api/replays") return json({ replays: options.replays ? [REPLAY_SUMMARY] : [] });
+    if (url.pathname === `/api/replays/${REPLAY_SUMMARY.id}` && options.replays)
+      return json({ ...REPLAY_SUMMARY, runs: [replayRun] });
     if (url.pathname === "/api/session" && method === "POST") {
       const sent = (body as { code?: string }).code;
       if (sent !== ACCESS_CODE) return json({ detail: "Invalid access code." }, 401);

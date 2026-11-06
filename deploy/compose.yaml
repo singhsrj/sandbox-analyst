@@ -34,7 +34,7 @@ services:
       api: {condition: service_healthy}
     ports: ["80:80", "443:443"]
     environment:
-      API_HOST: ${API_HOST:?set API_HOST in deploy/.env, e.g. 13-233-1-2.sslip.io}
+      API_HOST: ${API_HOST:?set API_HOST in deploy/.env, e.g. sandbox-analyst.duckdns.org}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data

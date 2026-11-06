@@ -117,3 +117,15 @@ Short ADRs. Each: context → decision → consequences. Newest at the bottom.
 - **Context:** the brief asks for a multi-model comparison. A full run of the 80-question set uses about 80 x 150k = 12M tokens per model (estimate from M2-M5 runs, to be confirmed by the first eval batch), and the budget is the remaining AWS credit.
 - **Decision (user, 2026-11-06):** M6 evaluates only `openai.gpt-oss-120b`. No model comparison.
 - **Consequences:** results say how well this agent works with this model, not which model is best. The harness keeps a `--model` option, so a comparison can be run later. This is listed as a limitation in the README and the eval report.
+
+## ADR-025: Replay mode
+- **Context:** without the access code, or once the daily budget is used up, a portfolio demo would show nothing. The brief asks for a replay mode.
+- **Decision:** recorded runs are exported from real threads (`scripts/export_replay.py`) into `api/replays/<slug>/` (the exact UI-stream chunks plus the produced files) and served read-only and publicly at `/api/replays`. The web app lists them on the start page and opens them without a composer, with a banner saying when, with which model, and what was checked.
+- **Rules:** only runs whose answers were checked against the database are published, and the check is stated (`verified`). Export drops Langfuse trace links (a private project) and run summaries except `resumes`. Replay files use the same safe file serving as artifacts.
+
+## ADR-026: Deployment topology
+- **Web:** Vercel (free, HTTPS, builds from GitHub, root directory `web`).
+- **API:** one EC2 **t4g.small** in ap-south-1 (same region as Bedrock), free for 750 h/month until 2026-12-31, with Docker Compose: Caddy (HTTPS, only published ports 80/443) in front of the API on a private network with a fixed range. uvicorn trusts `X-Forwarded-For` only from that range (never `*`), and Caddy overwrites the header for untrusted clients; verified locally that a spoofed header is ignored. Docker on Linux keeps the client's address through published ports; this is checked once after deployment (docs/deploy.md).
+- **Host name:** DuckDNS, because it is on the Public Suffix List (its own Let's Encrypt rate limit); `sslip.io` is not and shares one limit across all users.
+- **Not chosen:** App Runner or ECS (more moving parts and cost for one container); a Vercel rewrite to a plain-HTTP API (bearer tokens would travel unencrypted between Vercel and the server).
+- **Least privilege:** the server has no admin database credentials; secrets only in `deploy/.env` (mode 600), never in the image.

@@ -11,12 +11,14 @@ GET    /api/threads                          this visitor's threads             
 GET    /api/threads/{id}                     thread + run history (replayable)     [auth]
 DELETE /api/threads/{id}                                                           [auth]
 GET    /api/threads/{id}/artifacts/{name}    chart / CSV / report download         [auth]
+GET    /api/replays[/{slug}[/files/{name}]]  recorded, checked runs (replay mode)   public
 """
 
 from __future__ import annotations
 
 import mimetypes
 import time
+from pathlib import Path
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, HTTPException, Request
@@ -299,6 +301,11 @@ async def get_artifact(
     path = artifact_path(services.settings.artifacts_dir, thread_id, name)
     if path is None:
         raise HTTPException(status_code=404, detail="Not found.")
+    return _safe_file(path, cache="private, max-age=300")
+
+
+def _safe_file(path: Path, *, cache: str) -> FileResponse:
+    """Serve a generated file so the browser can never run it (no HTML, no sniffing, sandboxed)."""
     media_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
     if path.suffix.lower() in {".md", ".txt", ".json"}:
         media_type = "text/plain; charset=utf-8"  # never rendered as HTML by the browser
@@ -308,6 +315,29 @@ async def get_artifact(
         headers={
             "X-Content-Type-Options": "nosniff",
             "Content-Security-Policy": "default-src 'none'; sandbox",
-            "Cache-Control": "private, max-age=300",
+            "Cache-Control": cache,
         },
     )
+
+
+# --------------------------------------------------------------------------- replays (public)
+@router.get("/replays")
+async def list_replays(services: ServicesDep) -> dict[str, Any]:
+    """Recorded, checked runs anyone can watch without the access code."""
+    return {"replays": [r.summary() for r in services.replays.list()]}
+
+
+@router.get("/replays/{slug}")
+async def get_replay(slug: str, services: ServicesDep) -> dict[str, Any]:
+    replay = services.replays.get(slug)
+    if replay is None:
+        raise HTTPException(status_code=404, detail="Recorded run not found.")
+    return {**replay.summary(), "runs": replay.runs}
+
+
+@router.get("/replays/{slug}/files/{name}")
+async def get_replay_file(slug: str, name: str, services: ServicesDep) -> FileResponse:
+    path = services.replays.file(slug, name)
+    if path is None:
+        raise HTTPException(status_code=404, detail="Not found.")
+    return _safe_file(path, cache="public, max-age=3600")

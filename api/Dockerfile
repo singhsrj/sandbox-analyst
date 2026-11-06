@@ -14,6 +14,7 @@ COPY pyproject.toml uv.lock ./
 COPY api/pyproject.toml api/pyproject.toml
 RUN uv sync --frozen --no-dev --no-install-workspace --package sandbox-analyst-api
 COPY api/app api/app
+COPY api/replays api/replays
 RUN uv sync --frozen --no-dev --package sandbox-analyst-api
 
 FROM python:3.12-slim-bookworm

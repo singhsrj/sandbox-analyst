@@ -7,13 +7,15 @@ import {
   AuthRequiredError,
   deleteThread,
   getExamples,
+  getReplay,
   getSchema,
   getThread,
+  listReplays,
   listThreads,
 } from "@/lib/api";
 import { THREAD_ID_PATTERN } from "@/lib/config";
 import { runsToMessages } from "@/lib/replay";
-import type { AnalystMessage, SchemaTable, ThreadSummary } from "@/lib/types";
+import type { AnalystMessage, ReplaySummary, SchemaTable, ThreadSummary } from "@/lib/types";
 import { AccessDialog } from "./access-dialog";
 import { ChatSession } from "./chat-session";
 import { Sidebar } from "./sidebar";
@@ -27,7 +29,11 @@ const FALLBACK_EXAMPLES = [
 interface Opened {
   id: string;
   messages: AnalystMessage[];
+  /** Set when this is a recorded run (read-only). */
+  replay?: ReplaySummary;
 }
+
+const REPLAY_ID = /^[a-z0-9][a-z0-9-]{1,59}$/;
 
 export function Workspace({ fetchImpl }: { fetchImpl?: typeof fetch }) {
   const { signedIn, ready, signIn, signOut } = useSession();
@@ -37,6 +43,7 @@ export function Workspace({ fetchImpl }: { fetchImpl?: typeof fetch }) {
   const [schema, setSchema] = useState<SchemaTable[] | null>(null);
   const [schemaError, setSchemaError] = useState<string | null>(null);
   const [examples, setExamples] = useState<string[]>(FALLBACK_EXAMPLES);
+  const [replays, setReplays] = useState<ReplaySummary[]>([]);
   const [signInOpen, setSignInOpen] = useState(false);
   const [signInReason, setSignInReason] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -69,6 +76,23 @@ export function Workspace({ fetchImpl }: { fetchImpl?: typeof fetch }) {
     [signOut, startNew],
   );
 
+  const openReplay = useCallback(
+    async (id: string) => {
+      setMenuOpen(false);
+      setLoadError(null);
+      try {
+        const replay = await getReplay(id);
+        const { runs, ...summary } = replay;
+        setOpened({ id: `replay-${id}`, messages: await runsToMessages(runs), replay: summary });
+        window.history.replaceState(null, "", `?replay=${id}`);
+      } catch (err) {
+        setLoadError(err instanceof Error ? err.message : "Could not open that recorded run.");
+        startNew();
+      }
+    },
+    [startNew],
+  );
+
   const refreshThreads = useCallback(async () => {
     try {
       const list = await listThreads();
@@ -83,6 +107,9 @@ export function Workspace({ fetchImpl }: { fetchImpl?: typeof fetch }) {
     getExamples()
       .then(setExamples)
       .catch(() => undefined); // the built-in examples stay
+    listReplays()
+      .then(setReplays)
+      .catch(() => undefined); // replay mode is optional
     getSchema()
       .then(setSchema)
       .catch(() => setSchemaError("Could not load the schema. Is the API running?"));
@@ -96,11 +123,14 @@ export function Workspace({ fetchImpl }: { fetchImpl?: typeof fetch }) {
     booted.current = true;
     void (async () => {
       await Promise.resolve();
-      const wanted = new URLSearchParams(window.location.search).get("t");
-      if (wanted && THREAD_ID_PATTERN.test(wanted) && signedIn) await openThread(wanted);
+      const params = new URLSearchParams(window.location.search);
+      const wanted = params.get("t");
+      const replay = params.get("replay");
+      if (replay && REPLAY_ID.test(replay)) await openReplay(replay);
+      else if (wanted && THREAD_ID_PATTERN.test(wanted) && signedIn) await openThread(wanted);
       else startNew();
     })();
-  }, [ready, signedIn, openThread, startNew]);
+  }, [ready, signedIn, openThread, openReplay, startNew]);
 
   useEffect(() => {
     if (!signedIn) return;
@@ -176,6 +206,10 @@ export function Workspace({ fetchImpl }: { fetchImpl?: typeof fetch }) {
             initialMessages={opened.messages}
             signedIn={signedIn}
             examples={examples}
+            replay={opened.replay}
+            replays={replays}
+            onOpenReplay={(id) => void openReplay(id)}
+            onExitReplay={startNew}
             onNeedSignIn={requestSignIn}
             onTurnFinished={() => void refreshThreads()}
             onOpenMenu={() => setMenuOpen(true)}

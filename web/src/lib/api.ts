@@ -1,6 +1,6 @@
 import { clearSession, getToken } from "./auth";
 import { API_BASE_URL } from "./config";
-import type { SchemaTable, StoredRun, ThreadSummary } from "./types";
+import type { ReplayDetail, ReplaySummary, SchemaTable, StoredRun, ThreadSummary } from "./types";
 
 export class ApiError extends Error {
   constructor(
@@ -59,6 +59,16 @@ export async function getSchema(): Promise<SchemaTable[]> {
   return body.tables;
 }
 
+/** Recorded, checked runs anyone can watch (replay mode). */
+export async function listReplays(): Promise<ReplaySummary[]> {
+  const body = (await (await request("/api/replays")).json()) as { replays: ReplaySummary[] };
+  return body.replays;
+}
+
+export async function getReplay(id: string): Promise<ReplayDetail> {
+  return (await (await request(`/api/replays/${encodeURIComponent(id)}`)).json()) as ReplayDetail;
+}
+
 // --- authenticated --------------------------------------------------------------------
 export async function listThreads(): Promise<ThreadSummary[]> {
   const body = (await (await request("/api/threads", {}, true)).json()) as {
@@ -78,7 +88,10 @@ export async function deleteThread(threadId: string): Promise<void> {
   await request(`/api/threads/${encodeURIComponent(threadId)}`, { method: "DELETE" }, true);
 }
 
-/** Artifacts need the bearer token, so images cannot be plain <img src>: fetch, then blob-URL. */
+/**
+ * A visitor's own files need the bearer token, so images cannot be plain <img src>: fetch, then
+ * blob-URL. Files of recorded runs (replays) are public and are fetched without it.
+ */
 export async function fetchArtifact(url: string): Promise<Blob> {
-  return (await request(url, {}, true)).blob();
+  return (await request(url, {}, !url.startsWith("/api/replays/"))).blob();
 }

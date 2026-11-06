@@ -104,3 +104,18 @@ export interface SchemaTable {
   description: string;
   columns: SchemaColumn[];
 }
+
+/** A recorded, checked run that anyone can watch (GET /api/replays). */
+export interface ReplaySummary {
+  id: string;
+  title: string;
+  question: string;
+  recorded_at: string;
+  model: string;
+  /** What was checked against the database before publishing. */
+  verified: string;
+}
+
+export interface ReplayDetail extends ReplaySummary {
+  runs: StoredRun[];
+}

@@ -223,6 +223,52 @@ describe("Workspace", () => {
     });
   });
 
+  describe("replay mode", () => {
+    it("visitors without a code can watch a recorded run, read-only", async () => {
+      const user = userEvent.setup();
+      mount({ replays: true });
+      const list = within(await screen.findByRole("list", { name: /recorded runs/i }));
+      await user.click(list.getByRole("button", { name: /cancelled in 2025/i }));
+
+      const banner = await screen.findByTestId("replay-banner");
+      expect(banner).toHaveTextContent(/recorded run/i);
+      expect(banner).toHaveTextContent("1,086 matches the database");
+      expect(await screen.findByTestId("answer")).toHaveTextContent(/cancelled/i);
+      expect(screen.queryByLabelText("Your question")).not.toBeInTheDocument(); // no composer
+      expect(screen.queryByRole("dialog", { name: /access code/i })).not.toBeInTheDocument();
+      expect(window.location.search).toBe("?replay=cancelled-orders");
+      expect(chatRequests()).toHaveLength(0);
+    });
+
+    it("a recorded run's files load without a token", async () => {
+      const user = userEvent.setup();
+      mount({ replays: true });
+      await user.click(await screen.findByRole("button", { name: /cancelled in 2025/i }));
+      await screen.findByTestId("answer");
+      await user.click(await screen.findByRole("button", { name: /files \(1\)/i }));
+      await waitFor(() =>
+        expect(api.requests.some((r) => r.path === "/api/replays/cancelled-orders/files/chart.png")).toBe(true),
+      );
+      const fileRequest = api.requests.find((r) => r.path.startsWith("/api/replays/cancelled-orders/files/"));
+      expect(fileRequest?.headers.get("authorization")).toBeNull();
+    });
+
+    it("leaving a recorded run starts a fresh question", async () => {
+      const user = userEvent.setup();
+      mount({ replays: true });
+      await user.click(await screen.findByRole("button", { name: /cancelled in 2025/i }));
+      await user.click(await screen.findByRole("button", { name: /ask your own question/i }));
+      expect(await screen.findByLabelText("Your question")).toBeInTheDocument();
+      expect(screen.queryByTestId("replay-banner")).not.toBeInTheDocument();
+    });
+
+    it("the list is hidden when there are no recorded runs", async () => {
+      mount();
+      await screen.findByRole("list", { name: /example questions/i });
+      expect(screen.queryByRole("list", { name: /recorded runs/i })).not.toBeInTheDocument();
+    });
+  });
+
   it("the access token is kept for the tab (sessionStorage) but never in localStorage", async () => {
     const user = userEvent.setup();
     mount();

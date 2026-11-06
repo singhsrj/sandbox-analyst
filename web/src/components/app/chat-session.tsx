@@ -21,7 +21,7 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/compone
 import { ApprovalBook, awaitingApproval } from "@/lib/approvals";
 import { getToken } from "@/lib/auth";
 import { API_BASE_URL } from "@/lib/config";
-import type { AnalystMessage, ApprovalDecision } from "@/lib/types";
+import type { AnalystMessage, ApprovalDecision, ReplaySummary } from "@/lib/types";
 import { ApprovalContext } from "./approval-card";
 import { ArtifactPanel } from "./artifact-panel";
 import { AssistantTurn, organize } from "./assistant-turn";
@@ -31,6 +31,12 @@ interface ChatSessionProps {
   initialMessages: AnalystMessage[];
   signedIn: boolean;
   examples: string[];
+  /** A recorded run: shown read-only, with no composer. */
+  replay?: ReplaySummary;
+  /** Recorded runs offered on the empty page. */
+  replays?: ReplaySummary[];
+  onOpenReplay?: (id: string) => void;
+  onExitReplay?: () => void;
   onNeedSignIn: (reason?: string) => void;
   onTurnFinished: () => void;
   onOpenMenu: () => void;
@@ -59,6 +65,10 @@ export function ChatSession({
   initialMessages,
   signedIn,
   examples,
+  replay,
+  replays = [],
+  onOpenReplay,
+  onExitReplay,
   onNeedSignIn,
   onTurnFinished,
   onOpenMenu,
@@ -196,10 +206,17 @@ export function ChatSession({
         </header>
 
         <ApprovalContext.Provider value={approvals}>
-        <Conversation className="min-h-0 flex-1">
+        {/* a recorded run opens at its question and banner, not scrolled to the end */}
+        <Conversation className="min-h-0 flex-1" initial={replay ? false : "smooth"}>
           <ConversationContent className="mx-auto w-full max-w-[46rem] gap-0 px-5 py-8 md:py-12">
+            {replay ? <ReplayBanner replay={replay} /> : null}
             {empty ? (
-              <EmptyState examples={examples} onPick={send} />
+              <EmptyState
+                examples={examples}
+                onPick={send}
+                replays={replays}
+                onOpenReplay={onOpenReplay}
+              />
             ) : (
               messages.map((message, index) => {
                 if (message.role === "user") {
@@ -254,6 +271,16 @@ export function ChatSession({
                 </Button>
               </div>
             ) : null}
+            {replay ? (
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-sm border bg-card px-3 py-2.5">
+                <span className="text-sm text-muted-foreground">
+                  This is a recorded run. Nothing here runs live.
+                </span>
+                <Button size="sm" onClick={onExitReplay}>
+                  Ask your own question
+                </Button>
+              </div>
+            ) : (
             <PromptInput
               onSubmit={({ text }) => {
                 const value = text.trim();
@@ -291,6 +318,7 @@ export function ChatSession({
                 <PromptInputSubmit status={status} onStop={stop} disabled={paused && !busy} />
               </PromptInputFooter>
             </PromptInput>
+            )}
           </div>
         </div>
       </section>
@@ -312,7 +340,17 @@ export function ChatSession({
   );
 }
 
-function EmptyState({ examples, onPick }: { examples: string[]; onPick: (q: string) => void }) {
+function EmptyState({
+  examples,
+  onPick,
+  replays,
+  onOpenReplay,
+}: {
+  examples: string[];
+  onPick: (q: string) => void;
+  replays: ReplaySummary[];
+  onOpenReplay?: (id: string) => void;
+}) {
   return (
     <div className="py-4 md:py-10">
       <h1 className="max-w-[22ch] text-3xl font-semibold tracking-tight text-balance">
@@ -334,6 +372,50 @@ function EmptyState({ examples, onPick }: { examples: string[]; onPick: (q: stri
           </li>
         ))}
       </ul>
+      {replays.length > 0 && onOpenReplay ? (
+        <section className="mt-10" aria-labelledby="recorded-runs">
+          <h2 id="recorded-runs" className="text-sm font-semibold">
+            No access code? Watch a recorded run
+          </h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Real runs of the agent, saved with every step and file. Their answers were checked
+            against the database.
+          </p>
+          <ul className="mt-3 divide-y border-y" aria-label="Recorded runs">
+            {replays.map((r) => (
+              <li key={r.id}>
+                <button
+                  onClick={() => onOpenReplay(r.id)}
+                  className="flex w-full items-baseline justify-between gap-3 px-1 py-3 text-left hover:bg-muted/60"
+                >
+                  <span className="text-[15px] leading-6">{r.title}</span>
+                  <span className="shrink-0 text-xs text-muted-foreground tabular-nums">{r.recorded_at}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
     </div>
+  );
+}
+
+function ReplayBanner({ replay }: { replay: ReplaySummary }) {
+  return (
+    <aside
+      className="mb-6 rounded-sm border px-3 py-2.5 text-sm"
+      aria-label="About this recorded run"
+      data-testid="replay-banner"
+    >
+      <p>
+        <span className="marked font-medium">Recorded run</span>{" "}
+        <span className="text-muted-foreground">
+          from {replay.recorded_at}, model {replay.model}.
+        </span>
+      </p>
+      {replay.verified ? (
+        <p className="mt-1 text-muted-foreground">Checked against the database: {replay.verified}</p>
+      ) : null}
+    </aside>
   );
 }

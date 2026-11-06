@@ -75,3 +75,15 @@ jobs:
         run: npm audit --omit=dev
 
   # eval-smoke: added in M6 (small golden subset, cheap model, strict budget)
+
+  image:
+    # The production image must build from the lock file (catches Dockerfile / dependency drift).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the API image
+        run: docker build -f api/Dockerfile -t sandbox-analyst-api:ci .
+      - name: The image starts and has no secrets or tests in it
+        run: |
+          docker run --rm --entrypoint sh sandbox-analyst-api:ci -c \
+            'test "$(id -u)" != 0 && ! find / -name ".env" -not -path "/proc/*" 2>/dev/null | grep -q . && test ! -d /app/api/tests && python -c "import app.main"'

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Annotated
 
 from fastapi import Depends, Header, HTTPException, Request
@@ -11,6 +12,7 @@ from app.auth import AuthError, Session, verify_token
 from app.config import Settings
 from app.db.app_store import AppStore
 from app.ratelimit import RateLimiter
+from app.replays import ReplayStore
 from app.sandbox.manager import SandboxManager
 from app.service.chat import ChatService
 
@@ -25,6 +27,7 @@ class Services:
     chat_limiter: RateLimiter = field(default_factory=lambda: RateLimiter(10))  # per session, min
     run_ip_limiter: RateLimiter = field(default_factory=lambda: RateLimiter(20, 3600))  # per IP, h
     session_ip_limiter: RateLimiter = field(default_factory=lambda: RateLimiter(10, 3600))
+    replays: ReplayStore = field(default_factory=lambda: ReplayStore(Path("/nonexistent")))
 
 
 def get_services(request: Request) -> Services:

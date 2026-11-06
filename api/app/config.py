@@ -71,6 +71,7 @@ class Settings(BaseSettings):
     sandbox_idle_seconds: int = Field(default=300, ge=30)  # reaper kills sandboxes idle this long
 
     artifacts_dir: Path = REPO_ROOT / "runs"  # sandbox deliverables + saved run records
+    replays_dir: Path = REPO_ROOT / "api" / "replays"  # recorded runs anyone can watch
 
     # --- observability (Langfuse) ---
     langfuse_public_key: SecretStr | None = None
