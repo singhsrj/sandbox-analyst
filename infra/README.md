@@ -37,6 +37,8 @@ aws_secret_access_key = ...
 
 Keep CloudShell's `terraform.tfstate` (in `infra/bootstrap/`) or download it: it is how the bootstrap resources are changed or removed later.
 
+**If CloudShell is unavailable** (new accounts can't create a CloudShell environment until AWS finishes verifying them), do the same by hand: IAM → Users → Create user `sandbox-analyst-deployer` (no console access) → Add permissions → Create inline policy → JSON → paste `bootstrap/deployer-policy.json` (identical rules to `main.tf`) → create an access key; and create the budget in Billing → Budgets with Credits unticked.
+
 ## 2. Server (operator machine)
 
 ```bash

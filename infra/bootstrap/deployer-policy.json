@@ -1,0 +1,74 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadOnlyDescribe",
+      "Effect": "Allow",
+      "Action": ["ec2:Describe*", "sts:GetCallerIdentity"],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ManageNetworkingAndKeys",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:CreateSecurityGroup",
+        "ec2:DeleteSecurityGroup",
+        "ec2:AuthorizeSecurityGroupIngress",
+        "ec2:RevokeSecurityGroupIngress",
+        "ec2:AuthorizeSecurityGroupEgress",
+        "ec2:RevokeSecurityGroupEgress",
+        "ec2:ModifySecurityGroupRules",
+        "ec2:UpdateSecurityGroupRuleDescriptionsIngress",
+        "ec2:ImportKeyPair",
+        "ec2:DeleteKeyPair",
+        "ec2:AllocateAddress",
+        "ec2:ReleaseAddress",
+        "ec2:AssociateAddress",
+        "ec2:DisassociateAddress",
+        "ec2:CreateTags",
+        "ec2:DeleteTags"
+      ],
+      "Resource": "*",
+      "Condition": { "StringEquals": { "aws:RequestedRegion": "ap-south-1" } }
+    },
+    {
+      "Sid": "LaunchOnlyTheChosenInstanceType",
+      "Effect": "Allow",
+      "Action": "ec2:RunInstances",
+      "Resource": "arn:aws:ec2:ap-south-1:*:instance/*",
+      "Condition": { "StringEquals": { "ec2:InstanceType": "t4g.small" } }
+    },
+    {
+      "Sid": "LaunchSupportingResources",
+      "Effect": "Allow",
+      "Action": "ec2:RunInstances",
+      "Resource": [
+        "arn:aws:ec2:ap-south-1::image/*",
+        "arn:aws:ec2:ap-south-1:*:network-interface/*",
+        "arn:aws:ec2:ap-south-1:*:security-group/*",
+        "arn:aws:ec2:ap-south-1:*:subnet/*",
+        "arn:aws:ec2:ap-south-1:*:volume/*",
+        "arn:aws:ec2:ap-south-1:*:key-pair/*"
+      ]
+    },
+    {
+      "Sid": "ManageOwnInstancesOnly",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:TerminateInstances",
+        "ec2:StopInstances",
+        "ec2:StartInstances",
+        "ec2:RebootInstances",
+        "ec2:ModifyInstanceAttribute"
+      ],
+      "Resource": "arn:aws:ec2:ap-south-1:*:instance/*",
+      "Condition": { "StringEquals": { "aws:ResourceTag/project": "sandbox-analyst" } }
+    },
+    {
+      "Sid": "LookUpUbuntuImage",
+      "Effect": "Allow",
+      "Action": ["ssm:GetParameter", "ssm:GetParameters"],
+      "Resource": "arn:aws:ssm:ap-south-1::parameter/aws/service/canonical/*"
+    }
+  ]
+}
