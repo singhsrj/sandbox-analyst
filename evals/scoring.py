@@ -40,6 +40,19 @@ class Score:
         return self
 
 
+_THIN_SPACES = chr(0xA0) + chr(0x2009) + chr(0x202F)  # no-break, thin, narrow no-break
+_TYPOGRAPHY = str.maketrans(
+    {chr(0x2019): "'", chr(0x2018): "'", chr(0x2011): "-", chr(0x2013): "-"}
+)  # curly quotes, non-breaking hyphen, en dash
+
+
+def normalize(text: str) -> str:
+    """Undo typography that hides words and numbers from simple patterns (found in live runs:
+    "can't" written with a curly apostrophe, and a narrow no-break space as thousands separator)."""
+    text = text.translate(_TYPOGRAPHY)
+    return re.sub(rf"(?<=\d)[{_THIN_SPACES}](?=\d{{3}}\b)", ",", text)
+
+
 def numbers_in(text: str) -> list[float]:
     """Every number written in the text, with $/,/k/M handled. Percent values stay as written."""
     found: list[float] = []
@@ -83,6 +96,7 @@ def _first_position(text: str, name: str) -> int:
 def score(
     question: dict[str, Any], answer: str, sql_log: list[dict[str, Any]], status: str
 ) -> Score:
+    answer = normalize(answer)
     exp = question["expected"]
     kind = exp["kind"]
     rel = float(exp.get("tolerance", 0.0))
