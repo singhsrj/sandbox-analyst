@@ -22,7 +22,9 @@ dev = [
     "mypy>=2.4.1",
     "pytest>=9.2.0",
     "pytest-asyncio>=1.4.1.post1",
+    "pyyaml>=6.0.3",
     "ruff>=0.17.3",
+    "types-pyyaml>=6.0.12.20261103",
 ]
 
 # ---------- tooling (applies to the whole repo) ----------
@@ -45,7 +47,7 @@ select = [
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["app", "db"]
+known-first-party = ["app", "db", "evals"]
 
 [tool.ruff.lint.per-file-ignores]
 "**/tests/**" = ["S101", "S105", "S106", "E501"]  # asserts, fake secrets, long SQL are fine in tests
@@ -55,7 +57,7 @@ known-first-party = ["app", "db"]
 python_version = "3.12"
 strict = true
 plugins = ["pydantic.mypy"]
-files = ["api/app", "api/tests", "db"]
+files = ["api/app", "api/tests", "db", "evals"]
 
 [[tool.mypy.overrides]]
 module = ["langchain_e2b", "langchain_e2b.*"]
