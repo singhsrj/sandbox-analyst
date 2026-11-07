@@ -4,6 +4,7 @@ import { CheckIcon, CopyIcon, DownloadIcon, XIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { MessageResponse } from "@/components/ai-elements/message";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { fetchArtifact } from "@/lib/api";
 import { formatBytes, formatCount, formatSeconds, replaceSandboxImages } from "@/lib/format";
 import { parseCsv } from "@/lib/parse";
@@ -75,6 +76,32 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
+/** Tap-to-zoom: the chart opens in an overlay at a readable size; scroll inside it to pan. */
+function ZoomableImage({ src, name }: { src: string; name: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        aria-label={`Zoom ${name}`}
+        className="block w-full min-w-0 cursor-zoom-in"
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element -- blob URL created at runtime */}
+        <img src={src} alt={name} className="block h-auto w-full max-w-full bg-white" />
+      </button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="h-[90dvh] w-[calc(100%-1rem)] max-w-none gap-0 overflow-auto p-0 sm:max-w-none">
+          <DialogTitle className="sr-only">{name}</DialogTitle>
+          <DialogDescription className="sr-only">Enlarged chart. Scroll to pan.</DialogDescription>
+          {/* eslint-disable-next-line @next/next/no-img-element -- blob URL created at runtime */}
+          <img src={src} alt={name} className="block h-auto w-[max(100%,48rem)] max-w-none bg-white" />
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
 function FilePreview({ item, loaded }: { item: ArtifactItem; loaded: Loaded }) {
   if (loaded.state === "loading") return <p className="p-3 text-sm text-muted-foreground">Loading…</p>;
   if (loaded.state === "error")
@@ -85,13 +112,12 @@ function FilePreview({ item, loaded }: { item: ArtifactItem; loaded: Loaded }) {
     );
   const ext = extensionOf(item.name);
   if (ext === "png" || ext === "jpg" || ext === "jpeg") {
-    // eslint-disable-next-line @next/next/no-img-element -- blob URL created at runtime
-    return <img src={loaded.objectUrl} alt={item.name} className="block h-auto w-full bg-white" />;
+    return <ZoomableImage src={loaded.objectUrl} name={item.name} />;
   }
   if (ext === "csv" && loaded.text !== null) {
     const { header, rows, truncated } = parseCsv(loaded.text, 15);
     return (
-      <div className="grid grid-cols-1 gap-2 p-3">
+      <div className="grid min-w-0 grid-cols-1 gap-2 p-3">
         <ResultTable header={header} rows={rows} />
         {truncated ? (
           <p className="text-xs text-muted-foreground">Showing the first {rows.length} rows. Download for the rest.</p>
@@ -101,7 +127,7 @@ function FilePreview({ item, loaded }: { item: ArtifactItem; loaded: Loaded }) {
   }
   if (ext === "md" && loaded.text !== null) {
     return (
-      <div className="max-h-[28rem] overflow-auto p-3 text-sm leading-6">
+      <div className="max-h-[28rem] min-w-0 overflow-auto p-3 text-sm leading-6 [&_img]:h-auto [&_img]:max-w-full">
         <MessageResponse>{replaceSandboxImages(loaded.text)}</MessageResponse>
       </div>
     );
@@ -116,7 +142,7 @@ function FilePreview({ item, loaded }: { item: ArtifactItem; loaded: Loaded }) {
 function FileCard({ item }: { item: ArtifactItem }) {
   const loaded = useArtifact(item);
   return (
-    <section aria-label={item.name} className="shrink-0 overflow-hidden rounded-sm border bg-card" data-testid="file-card">
+    <section aria-label={item.name} className="min-w-0 shrink-0 overflow-hidden rounded-sm border bg-card" data-testid="file-card">
       <header className="flex items-center gap-2 border-b px-3 py-1.5">
         <h3 className="min-w-0 flex-1 truncate text-sm font-medium">{item.name}</h3>
         <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{formatBytes(item.size)}</span>
@@ -177,7 +203,7 @@ interface ArtifactPanelProps {
 
 export function ArtifactPanel({ artifacts, run, onClose }: ArtifactPanelProps) {
   return (
-    <div className="flex h-full min-h-0 flex-col" data-testid="artifact-panel">
+    <div className="flex h-full min-h-0 w-full min-w-0 flex-col" data-testid="artifact-panel">
       <div className="flex items-center justify-between border-b px-4 py-3">
         <h2 className="text-sm font-semibold">Files{artifacts.length ? ` (${artifacts.length})` : ""}</h2>
         {onClose ? (
@@ -188,7 +214,7 @@ export function ArtifactPanel({ artifacts, run, onClose }: ArtifactPanelProps) {
       </div>
       {/* flex column, not grid: cards use overflow-hidden, so a fixed-height grid would shrink every
           row to the same height and crop charts and tables. shrink-0 keeps them at full size. */}
-      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
         {artifacts.length === 0 ? (
           <p className="text-sm text-muted-foreground">
             Charts, tables and the written report appear here when an answer produces them.
