@@ -204,10 +204,10 @@ interface ArtifactPanelProps {
 export function ArtifactPanel({ artifacts, run, onClose }: ArtifactPanelProps) {
   return (
     <div className="flex h-full min-h-0 w-full min-w-0 flex-col" data-testid="artifact-panel">
-      <div className="flex items-center justify-between border-b px-4 py-3">
+      <div className="flex items-center min-h-12 justify-between border-b pr-2 pl-4">
         <h2 className="text-sm font-semibold">Files{artifacts.length ? ` (${artifacts.length})` : ""}</h2>
         {onClose ? (
-          <Button variant="ghost" size="icon-xs" onClick={onClose} aria-label="Close files">
+          <Button variant="ghost" size="icon" className="size-11" onClick={onClose} aria-label="Close files panel">
             <XIcon />
           </Button>
         ) : null}

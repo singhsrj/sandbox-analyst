@@ -330,7 +330,7 @@ export function ChatSession({
       ) : null}
 
       <Dialog open={filesOpen && panel !== null} onOpenChange={setFilesOpen}>
-        <DialogContent className="h-[85dvh] max-w-2xl gap-0 overflow-hidden p-0 xl:hidden">
+        <DialogContent showCloseButton={false} className="h-[85dvh] max-w-2xl gap-0 overflow-hidden p-0 xl:hidden">
           <DialogTitle className="sr-only">Files and run details</DialogTitle>
           <DialogDescription className="sr-only">Charts, tables and the report for this answer</DialogDescription>
           {panel ? <ArtifactPanel artifacts={panel.artifacts} run={panel.run} onClose={() => setFilesOpen(false)} /> : null}
