@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 
-from langfuse import Langfuse, get_client
+from langfuse import Langfuse, LangfuseSpan, get_client
 from langfuse.langchain import CallbackHandler
 
 from app.config import Settings
@@ -34,7 +34,29 @@ def init_langfuse(settings: Settings) -> Langfuse | None:
 def make_handler(settings: Settings) -> CallbackHandler | None:
     if init_langfuse(settings) is None:
         return None
-    return CallbackHandler(public_key=settings.secret("langfuse_public_key"))
+    public_key = settings.secret("langfuse_public_key")
+    if not settings.langfuse_public_traces:
+        return CallbackHandler(public_key=public_key)
+    # Public traces: the run is nested under a root span so finalize_trace can attach the
+    # "publish" marker to it (see publish_trace) and keep one root, named after the app.
+    root = get_client(public_key=public_key).start_observation(name="sandbox-analyst")
+    handler = CallbackHandler(
+        public_key=public_key,
+        trace_context={"trace_id": root.trace_id, "parent_span_id": root.id},
+    )
+    handler.public_root = root  # type: ignore[attr-defined]
+    return handler
+
+
+def publish_trace(root: LangfuseSpan) -> None:
+    """Make the trace public: anyone with its link can open it without logging in.
+
+    Langfuse takes the trace's public flag from its most recently started span, and every span of
+    the run is created non-public, so the flag goes on a short marker span started last.
+    """
+    marker = root.start_observation(name="publish-trace", as_type="span")
+    marker.set_trace_as_public()
+    marker.end()
 
 
 def finalize_trace(
@@ -46,6 +68,10 @@ def finalize_trace(
     try:
         client = get_client(public_key=settings.secret("langfuse_public_key"))
         trace_id = handler.last_trace_id
+        root = getattr(handler, "public_root", None)
+        if root is not None:
+            publish_trace(root)
+            root.end()
         client.flush()
         url = client.get_trace_url(trace_id=trace_id) if trace_id else None
         return trace_id, url

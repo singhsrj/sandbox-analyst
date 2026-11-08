@@ -77,6 +77,8 @@ class Settings(BaseSettings):
     langfuse_public_key: SecretStr | None = None
     langfuse_secret_key: SecretStr | None = None
     langfuse_base_url: str = "https://cloud.langfuse.com"
+    # Publish each trace so its link opens without a Langfuse login (portfolio demo).
+    langfuse_public_traces: bool = False
 
     # --- auth / access code ---
     demo_access_code: SecretStr | None = None
