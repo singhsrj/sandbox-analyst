@@ -230,3 +230,54 @@ def test_garbage_input_never_raises(payload: Any) -> None:
     assert adapter.feed("updates", payload) == []
     assert adapter.feed("messages", payload) == []
     assert adapter.feed("other", payload) == []
+
+
+def test_a_call_with_garbled_arguments_is_announced_before_its_error_result() -> None:
+    """Real failure: gpt-oss cut off a write_file call; the browser rejected the orphan result."""
+    bad = {
+        "type": "invalid_tool_call",
+        "name": "write_file",
+        "args": '{"file_path": "/home/user/outputs/report.md", "content": "# Foot',
+        "id": "chatcmpl-tool-bad",
+        "error": "malformed",
+    }
+    result = ToolMessage(
+        "Tool call write_file with id chatcmpl-tool-bad could not be executed.",
+        tool_call_id="chatcmpl-tool-bad",
+        name="write_file",
+    )
+    chunks = run_adapter(
+        [
+            (
+                "updates",
+                {"model": {"messages": [AIMessage("", invalid_tool_calls=[bad], id="m1")]}},
+            ),
+            ("updates", {"model": {"messages": [result]}}),
+        ]
+    )
+    assert_well_formed(chunks)
+    announced = [c for c in chunks if c["type"] == "tool-input-available"]
+    assert [c["toolName"] for c in announced] == ["write_file"] and announced[0]["input"] == {}
+
+
+def test_a_result_for_an_unseen_call_gets_a_synthetic_call_first() -> None:
+    """Safety net: middleware can add results (e.g. 'cancelled') for calls we never streamed."""
+    orphan = ToolMessage("cancelled", tool_call_id="call-x", name="run_sql")
+    chunks = run_adapter([("updates", {"tools": {"messages": [orphan]}})])
+    assert_well_formed(chunks)
+    assert [c["type"] for c in chunks if c["type"].startswith("tool-")] == [
+        "tool-input-start",
+        "tool-input-available",
+        "tool-output-available",
+    ]
+
+
+def test_a_resumed_run_does_not_reannounce_calls_the_browser_already_has() -> None:
+    """Re-sending tool-input-start would reset the approval card the reviewer just answered."""
+    adapter = UIStreamAdapter("msg-1")
+    adapter.start(continuing=True)
+    chunks = adapter.feed(
+        "updates",
+        {"tools": {"messages": [ToolMessage("OK", tool_call_id="call-1", name="run_sql")]}},
+    )
+    assert [c["type"] for c in chunks] == ["tool-output-available"]
