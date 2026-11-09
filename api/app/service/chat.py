@@ -34,7 +34,7 @@ from app.agent.approvals import (
 from app.agent.factory import build_agent
 from app.agent.loop import AgentDriver
 from app.agent.models import get_model
-from app.agent.outputs import collect_outputs, unverified_file_claims
+from app.agent.outputs import collect_outputs, missing_file_claims, unverified_file_claims
 from app.agent.usage import BudgetExceeded, StepLimitExceeded, UsageTracker
 from app.artifacts import ArtifactStore
 from app.config import ApprovalMode, ModelProvider, Settings
@@ -261,7 +261,15 @@ class ChatService:
             sandbox_id = self._sandboxes.sandbox_id(thread_id)
             if sandbox_id and sandbox_id != turn.thread.sandbox_id:
                 await self._store.set_sandbox_id(thread_id, sandbox_id)
-            driver = AgentDriver(agent, config, turn.question, resume=turn.resume)
+            driver = AgentDriver(
+                agent,
+                config,
+                turn.question,
+                resume=turn.resume,
+                verify_files=lambda answer: missing_file_claims(
+                    self._sandboxes, thread_id, artifacts, answer
+                ),
+            )
             async for mode, payload in driver.events():
                 for chunk in adapter.feed(mode, payload):
                     sent.append(chunk)

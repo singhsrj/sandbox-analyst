@@ -21,7 +21,7 @@ from langchain_core.runnables import RunnableConfig
 from app.agent.factory import build_agent
 from app.agent.loop import AgentDriver
 from app.agent.models import get_model
-from app.agent.outputs import collect_outputs, unverified_file_claims
+from app.agent.outputs import collect_outputs, missing_file_claims, unverified_file_claims
 from app.agent.usage import BudgetExceeded, StepLimitExceeded, UsageTracker
 from app.artifacts import ArtifactStore
 from app.config import ModelProvider, Settings
@@ -40,6 +40,7 @@ class RunRecord:
     started_at: str
     status: str = "ok"  # ok | budget_exceeded | step_limit | error
     empty_reply_nudges: int = 0  # times the model ended its turn empty and was prompted again
+    file_claim_nudges: int = 0  # times the answer named a file that did not exist and was redone
     error: str | None = None
     final_answer: str = ""
     final_message_meta: dict[str, Any] = field(
@@ -146,7 +147,14 @@ async def run_question(
                 sql_log=record.sql,
                 model=get_model(settings, provider=provider, model=model_id),
             )
-            driver = AgentDriver(agent, config, question)
+            driver = AgentDriver(
+                agent,
+                config,
+                question,
+                verify_files=lambda answer: missing_file_claims(
+                    sandboxes, thread_id, artifacts, answer
+                ),
+            )
             async for mode, payload in driver.events():
                 if mode != "updates":
                     continue
@@ -156,6 +164,7 @@ async def run_question(
                         on_event(event)
             record.final_answer = driver.final_answer
             record.empty_reply_nudges = driver.nudges
+            record.file_claim_nudges = driver.file_nudges
             record.final_message_meta = driver.final_message_meta
         except StepLimitExceeded as exc:
             record.status, record.error = "step_limit", str(exc)
