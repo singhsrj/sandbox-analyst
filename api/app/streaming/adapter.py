@@ -68,11 +68,13 @@ class UIStreamAdapter:
         # emits it, so these are pending even if the client disconnects right afterwards.
         self.interrupts_sent: list[Any] = []
         self._finished = False
+        self._continuing = False
 
     # ------------------------------------------------------------------ lifecycle
     def start(self, *, continuing: bool = False) -> list[Chunk]:
         """Open the message. When `continuing` (resuming after an approval), no messageId is
         sent, so the browser keeps appending to the assistant message it already shows."""
+        self._continuing = continuing
         first: Chunk = (
             {"type": "start"}
             if continuing
@@ -171,40 +173,54 @@ class UIStreamAdapter:
         text = message_text(message).strip()
         if text and not message.tool_calls and (message.id not in self._streamed_ids):
             out.extend(self._append_text(text))  # provider did not stream it live
-        for call in message.tool_calls:
+        # A call whose arguments the model garbled or cut off (long file contents hit the output
+        # limit) is an `invalid_tool_call`, not a `tool_call`. It still gets an error result
+        # later, so it must be announced too or the browser rejects that result as an orphan.
+        for call in (*message.tool_calls, *message.invalid_tool_calls):
             call_id = call.get("id") or ""
             if not call_id or call_id in self._tool_inputs:
                 continue
-            self._tool_inputs.add(call_id)
-            out.extend(self._close_text())
-            self.final_text = ""  # text before a tool call is narration, not the answer
-            args = call.get("args") or {}
-            out.append(
-                {"type": "tool-input-start", "toolCallId": call_id, "toolName": call["name"]}
-            )
-            out.append(
-                {
-                    "type": "tool-input-available",
-                    "toolCallId": call_id,
-                    "toolName": call["name"],
-                    "input": args,
-                }
-            )
-            if call["name"] == TODO_TOOL and isinstance(args.get("todos"), list):
+            args = call.get("args")
+            args = args if isinstance(args, dict) else {}  # invalid calls carry raw text instead
+            name = call.get("name") or "tool"
+            out.extend(self._announce_call(call_id, name, args))
+            if name == TODO_TOOL and isinstance(args.get("todos"), list):
                 out.append({"type": "data-todos", "id": "todos", "data": {"todos": args["todos"]}})
+        return out
+
+    def _announce_call(self, call_id: str, name: str, args: dict[str, Any]) -> list[Chunk]:
+        self._tool_inputs.add(call_id)
+        out = self._close_text()
+        self.final_text = ""  # text before a tool call is narration, not the answer
+        out.append({"type": "tool-input-start", "toolCallId": call_id, "toolName": name})
+        out.append(
+            {
+                "type": "tool-input-available",
+                "toolCallId": call_id,
+                "toolName": name,
+                "input": args,
+            }
+        )
         return out
 
     def _on_tool_message(self, message: ToolMessage) -> list[Chunk]:
         call_id = message.tool_call_id
         if not call_id or call_id in self._tool_outputs:
             return []
+        out: list[Chunk] = []
+        # Safety net: a result is only valid after its call. LangGraph middleware can add results
+        # for calls this adapter never saw (for example patched-in "cancelled" messages), and the
+        # browser throws on such a result. A resumed run is exempt: its calls were announced in
+        # the request before the pause, and re-announcing them would reset the approval card.
+        if call_id not in self._tool_inputs and not self._continuing:
+            out.extend(self._announce_call(call_id, message.name or "tool", {}))
         self._tool_outputs.add(call_id)
         if call_id in self._denied:
-            return [{"type": "tool-output-denied", "toolCallId": call_id}]
+            return [*out, {"type": "tool-output-denied", "toolCallId": call_id}]
         text = clip(message_text(message))
         if getattr(message, "status", "success") == "error":
-            return [{"type": "tool-output-error", "toolCallId": call_id, "errorText": text}]
-        return [{"type": "tool-output-available", "toolCallId": call_id, "output": text}]
+            return [*out, {"type": "tool-output-error", "toolCallId": call_id, "errorText": text}]
+        return [*out, {"type": "tool-output-available", "toolCallId": call_id, "output": text}]
 
     def _on_interrupts(self, interrupts: Any) -> list[Chunk]:
         """A paused run: one approval request per gated tool call (see app/agent/approvals.py)."""

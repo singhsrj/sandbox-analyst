@@ -52,6 +52,17 @@ async def collect_outputs(
         return []
 
 
+async def missing_file_claims(
+    sandboxes: SandboxManager, thread_id: str, artifacts: ArtifactStore, answer: str
+) -> list[str]:
+    """Collect what the agent has saved so far, then name the files `answer` claims but lacks.
+
+    Used mid-run (before the answer is accepted) so the agent can be asked to fix the claim.
+    """
+    await collect_outputs(sandboxes, thread_id, artifacts)
+    return unverified_file_claims(answer, artifacts.all_names())
+
+
 def unverified_file_claims(answer: str, delivered_names: set[str]) -> list[str]:
     """Chart/report file names the answer mentions that were not actually delivered."""
     mentioned = {m.group(0) for m in _CLAIM_PATTERN.finditer(answer)}
