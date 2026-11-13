@@ -24,6 +24,7 @@ export interface RunInfo {
   empty_reply_nudges: number;
   unverified_file_claims: string[];
   approval_mode: ApprovalMode | string;
+  timezone: string;
   usage: {
     llm_calls: number;
     input_tokens: number;
@@ -46,6 +47,7 @@ export function normalizeRun(raw: Partial<RunInfo> | undefined | null): RunInfo 
     empty_reply_nudges: raw.empty_reply_nudges ?? 0,
     unverified_file_claims: Array.isArray(raw.unverified_file_claims) ? raw.unverified_file_claims : [],
     approval_mode: raw.approval_mode ?? "off",
+    timezone: raw.timezone ?? "UTC",
     usage: {
       llm_calls: raw.usage?.llm_calls ?? 0,
       input_tokens: raw.usage?.input_tokens ?? 0,

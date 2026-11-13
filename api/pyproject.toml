@@ -13,6 +13,7 @@ dependencies = [
     "psycopg[binary]>=3.3.8",
     "pydantic-settings>=2.16.2",
     "sqlglot>=30.29.0",
+    "tzdata>=2026.6",
     "uvicorn[standard]>=0.54.0",
 ]
 
