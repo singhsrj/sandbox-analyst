@@ -1,4 +1,4 @@
-"""The agent's custom tools: schema discovery, guarded SQL, and artifact export.
+"""The agent's custom tools: schema discovery, guarded SQL, artifact export, and the clock.
 
 Design rules (see docs/brief.md section 4):
   * the database is only ever touched here, on the backend, as the read-only `analyst_ro` role;
@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 import psycopg
 from langchain_core.tools import BaseTool, tool
 
+from app.agent.clock import DEFAULT_TIMEZONE, describe_now
 from app.artifacts import ArtifactError, ArtifactStore
 from app.config import Settings
 from app.db.analyst import QueryResult, fetch_catalog, run_readonly
@@ -47,6 +48,8 @@ class ToolContext:
     get_sandbox: SandboxProvider
     artifacts: ArtifactStore
     sql_log: list[dict[str, Any]] = field(default_factory=list)  # every query attempted, for audit
+    # IANA name from the client's request (not from the user's identity; see app/agent/clock.py)
+    timezone: str = DEFAULT_TIMEZONE
 
 
 def _clip(text: str, limit: int) -> str:
@@ -204,7 +207,15 @@ def build_tools(ctx: ToolContext) -> list[BaseTool]:
             return f"EXPORT REJECTED: {exc}"
         return f"Exported {artifact.name} ({artifact.size:,} bytes, {artifact.mime})."
 
-    return [list_tables, describe_table, run_sql, export_artifact]
+    @tool
+    async def current_datetime() -> str:
+        """Get the current date and time in the user's timezone. Call it whenever you need
+        today's date: to date a report, or to resolve relative periods such as "last month" or
+        "this year". Never guess the date and never write shell expressions like $(date).
+        """
+        return describe_now(ctx.timezone)
+
+    return [list_tables, describe_table, run_sql, export_artifact, current_datetime]
 
 
 def _summarize(result: QueryResult, path: str, preview_rows: int) -> str:

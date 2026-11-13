@@ -236,13 +236,16 @@ async def test_sandbox_id_is_remembered_for_reconnects(
 
 
 # ----------------------------------------------------------------------------- approvals (M5)
-async def pause(service: ChatService, patched: dict[str, Any], mode: Any = None) -> list[Any]:
+async def pause(
+    service: ChatService, patched: dict[str, Any], mode: Any = None, timezone: Any = None
+) -> list[Any]:
     patched["agent"] = PausingAgent()
     turn = await service.prepare(
         thread_id="thread-12345",
         owner_id="owner-12345",
         question="Dump orders?",
         approval_mode=mode,
+        timezone=timezone,
     )
     return [chunk async for chunk in service.stream(turn)]
 
@@ -265,6 +268,7 @@ async def test_a_flagged_query_pauses_the_run_and_records_what_is_pending(
     assert saved["status"] == "awaiting_approval" and saved["final_answer"] == ""
     assert saved["summary"]["pending_approvals"][0]["args"]["query"] == PausingAgent.QUERY
     assert saved["summary"]["approval_mode"] == "normal"
+    assert saved["summary"]["timezone"] == "UTC"  # none sent: the safe default
 
 
 async def test_a_disconnect_right_after_the_card_appears_still_leaves_it_answerable(
@@ -311,7 +315,7 @@ async def test_approving_resumes_the_same_message_and_finishes_the_run(
     settings: Settings, store: FakeStore, patched: dict[str, Any]
 ) -> None:
     service = make_service(settings, store)
-    await pause(service, patched, mode="strict")
+    await pause(service, patched, mode="strict", timezone="Asia/Kolkata")
     turn = await service.prepare_resume(
         thread_id="thread-12345",
         owner_id="owner-12345",
@@ -319,6 +323,7 @@ async def test_approving_resumes_the_same_message_and_finishes_the_run(
     )
     # mode, model and question come from the paused run, not the request
     assert turn.approval_mode == "strict" and turn.question == "Dump orders?"
+    assert turn.timezone == "Asia/Kolkata"
     chunks = [c async for c in service.stream(turn)]
 
     assert chunks[0] == {"type": "start"}  # no new messageId: the browser keeps its message
@@ -435,3 +440,17 @@ async def test_run_summary_keys_match_what_the_frontend_and_its_fixture_expect(
     spec.loader.exec_module(module)
     assert set(module.RUN_DATA) == set(run_data)
     assert set(module.RUN_DATA["usage"]) == set(run_data["usage"]) - set()
+
+
+async def test_the_clients_timezone_is_validated_and_kept_with_the_run(
+    settings: Settings, store: FakeStore
+) -> None:
+    service = make_service(settings, store)
+    turn = await service.prepare(
+        thread_id="thread-12345", owner_id="owner-12345", question="q?", timezone="Asia/Kolkata"
+    )
+    assert turn.timezone == "Asia/Kolkata"
+    bogus = await service.prepare(
+        thread_id="thread-67890", owner_id="owner-12345", question="q?", timezone="Not/AZone"
+    )
+    assert bogus.timezone == "UTC"

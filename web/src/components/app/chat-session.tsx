@@ -46,6 +46,16 @@ interface ChatSessionProps {
 
 const AUTH_PROBLEM = /access token|expired|Missing access/i;
 
+/** The browser's IANA timezone, so the agent can tell the user's local date and time. */
+function browserTimezone(): { timezone?: string } {
+  try {
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    return timezone ? { timezone } : {};
+  } catch {
+    return {};
+  }
+}
+
 /** The server answers errors with {"detail": "..."}; the SDK hands us that raw text. */
 export function friendlyError(error: Error): { message: string; authProblem: boolean } {
   let message = error.message;
@@ -105,6 +115,7 @@ export function ChatSession({
               messages: messages.slice(-1),
               trigger,
               ...(book.strict ? { approval_mode: "strict" } : {}),
+              ...browserTimezone(),
             },
             headers,
           };

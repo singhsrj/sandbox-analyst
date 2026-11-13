@@ -91,6 +91,9 @@ class ChatRequest(BaseModel):
     model: str | None = Field(default=None, max_length=120)
     # The browser may make approvals stricter for its questions ("strict"), never turn them off.
     approval_mode: Literal["normal", "strict"] | None = None
+    # The browser's IANA timezone ("Asia/Kolkata"); unknown values fall back to UTC. A request
+    # hint, not part of the identity, so it works the same with or without authentication.
+    timezone: str | None = Field(default=None, max_length=64)
     # Present = this request resumes a run paused for approval (no new question).
     approvals: list[ApprovalIn] | None = Field(default=None, min_length=1, max_length=20)
 
@@ -237,6 +240,7 @@ async def chat(
                 question=question,
                 model=body.model,
                 approval_mode=body.approval_mode,
+                timezone=body.timezone,
             )
     except ThreadNotFound as exc:
         raise HTTPException(status_code=404, detail="Thread not found.") from exc

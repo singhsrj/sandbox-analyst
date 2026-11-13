@@ -41,6 +41,7 @@ RUN_DATA = {
     "unverified_file_claims": [],
     "sql_queries": 1,
     "approval_mode": "normal",
+    "timezone": "UTC",
 }
 
 

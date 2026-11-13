@@ -221,6 +221,17 @@ describe("Workspace", () => {
       await waitFor(() => expect(chatRequests()).toHaveLength(1));
       expect((chatRequests()[0].body as Record<string, unknown>).approval_mode).toBe("strict");
     });
+
+    it("the browser's timezone is sent with each question", async () => {
+      const user = userEvent.setup();
+      mount();
+      await user.click(await screen.findByRole("button", { name: /why did revenue drop/i }));
+      await signIn(user);
+      await waitFor(() => expect(chatRequests()).toHaveLength(1));
+      expect((chatRequests()[0].body as Record<string, unknown>).timezone).toBe(
+        Intl.DateTimeFormat().resolvedOptions().timeZone,
+      );
+    });
   });
 
   describe("replay mode", () => {

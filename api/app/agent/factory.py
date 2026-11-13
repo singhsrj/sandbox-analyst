@@ -9,6 +9,7 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import InMemorySaver
 
 from app.agent.approvals import approval_middleware
+from app.agent.clock import DEFAULT_TIMEZONE, normalize_timezone
 from app.agent.models import get_model
 from app.agent.prompt import SYSTEM_PROMPT
 from app.artifacts import ArtifactStore
@@ -31,6 +32,7 @@ async def build_agent(
     checkpointer: BaseCheckpointSaver[Any] | None = None,
     known_sandbox_id: str | None = None,
     approval_mode: ApprovalMode = "off",
+    timezone: str = DEFAULT_TIMEZONE,
 ) -> Any:
     """Return a compiled agent bound to this thread's sandbox.
 
@@ -47,6 +49,7 @@ async def build_agent(
         get_sandbox=lambda: sandboxes.get(thread_id),
         artifacts=artifacts,
         sql_log=sql_log,
+        timezone=normalize_timezone(timezone),
     )
     approvals = approval_middleware(approval_mode)
     return create_deep_agent(

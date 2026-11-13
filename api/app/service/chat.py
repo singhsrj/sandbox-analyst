@@ -31,6 +31,7 @@ from app.agent.approvals import (
     pending_from_interrupts,
     resume_payload,
 )
+from app.agent.clock import DEFAULT_TIMEZONE, normalize_timezone
 from app.agent.factory import build_agent
 from app.agent.loop import AgentDriver
 from app.agent.models import get_model
@@ -87,6 +88,7 @@ class PreparedTurn:
     provider: ModelProvider
     model: str
     approval_mode: ApprovalMode = "off"
+    timezone: str = DEFAULT_TIMEZONE  # the client's IANA timezone, for the current_datetime tool
     resume: dict[str, Any] | None = None  # LangGraph resume values, keyed by interrupt id
     decisions: list[dict[str, Any]] = field(default_factory=list)  # what the reviewer decided
 
@@ -123,6 +125,7 @@ class ChatService:
         question: str,
         model: str | None = None,
         approval_mode: ApprovalMode | None = None,
+        timezone: str | None = None,
     ) -> PreparedTurn:
         """Validate and register a new question.
 
@@ -140,6 +143,7 @@ class ChatService:
             provider=self._settings.model_provider,
             model=model or self._settings.model,
             approval_mode=effective_approval_mode(self._settings.approval_mode, approval_mode),
+            timezone=normalize_timezone(timezone),
         )
 
     async def prepare_resume(
@@ -166,6 +170,7 @@ class ChatService:
             provider=summary.get("provider", self._settings.model_provider),
             model=summary.get("model", self._settings.model),
             approval_mode=summary.get("approval_mode", self._settings.approval_mode),
+            timezone=normalize_timezone(summary.get("timezone")),
             resume=resume,
             decisions=decisions,
         )
@@ -257,6 +262,7 @@ class ChatService:
                 checkpointer=self._checkpointer,
                 known_sandbox_id=turn.thread.sandbox_id,
                 approval_mode=turn.approval_mode,
+                timezone=turn.timezone,
             )
             sandbox_id = self._sandboxes.sandbox_id(thread_id)
             if sandbox_id and sandbox_id != turn.thread.sandbox_id:
@@ -351,6 +357,7 @@ class ChatService:
             "unverified_file_claims": claims,
             "sql_queries": len(sql_log),
             "approval_mode": turn.approval_mode,
+            "timezone": turn.timezone,
         }
         # A run whose approval request already reached the browser is paused, even if the browser
         # went away before the run finished saving (found live: a reload right after the card
