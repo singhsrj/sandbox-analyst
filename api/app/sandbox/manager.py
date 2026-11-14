@@ -7,7 +7,8 @@ Security posture of every sandbox (the code inside is model-written, i.e. untrus
   * per-command timeout: runaway loops are killed, the sandbox stays usable
   * process limit and output cap per command; a sandbox that stops answering is replaced
     (app/sandbox/e2b_backend.py)
-  * template `code-interpreter-v1` ships pandas/matplotlib/numpy/scipy, so no network is needed
+  * template `code-interpreter-v1` ships pandas/matplotlib/numpy/scipy, so no network is needed;
+    the few pure-Python extras it lacks are copied in from our own environment (SANDBOX_EXTRAS)
 
 Lifecycle: created on the first message of a thread (never when merely viewing it), reused for
 later turns (files from earlier turns stay available), reconnected after an API restart when its
@@ -18,6 +19,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import importlib.metadata
+import importlib.util
 import logging
 import time
 from types import TracebackType
@@ -35,6 +38,12 @@ logger = logging.getLogger(__name__)
 WORKDIR = "/home/user"
 DATA_DIR = f"{WORKDIR}/data"
 OUTPUT_DIR = f"{WORKDIR}/outputs"
+
+# Pure-Python, single-file modules the template lacks, copied from our locked environment into the
+# sandbox's user site-packages (the sandbox has no internet, so it cannot pip install them).
+# tabulate: pandas' DataFrame.to_markdown() needs it, and the model reaches for it to put tables
+# in report.md; without it every such run hit "Missing optional dependency 'tabulate'".
+SANDBOX_EXTRAS = ("tabulate",)
 
 
 class SandboxManager:
@@ -84,6 +93,7 @@ class SandboxManager:
                 timeout=self._settings.sandbox_command_timeout_seconds,
             )
             await raw.commands.run(f"mkdir -p {DATA_DIR} {OUTPUT_DIR}", timeout=30)
+            await _install_extras(raw)
             self._sandboxes[thread_id] = (raw, backend)
             return backend
 
@@ -164,6 +174,37 @@ class SandboxManager:
         tb: TracebackType | None,
     ) -> None:
         await self.close_all()
+
+
+def _extra_sources() -> dict[str, bytes]:
+    """`{path relative to site-packages: content}` for each SANDBOX_EXTRAS package, read from our
+    environment, plus a minimal dist-info: tabulate reports its version from package metadata, and
+    pandas rejects an optional dependency whose version is "unknown"."""
+    sources: dict[str, bytes] = {}
+    for name in SANDBOX_EXTRAS:
+        spec = importlib.util.find_spec(name)
+        if spec is None or spec.origin is None:
+            raise RuntimeError(f"{name} is not installed in the API environment")
+        module = f"{name}/__init__.py" if spec.submodule_search_locations else f"{name}.py"
+        with open(spec.origin, "rb") as handle:
+            sources[module] = handle.read()
+        version = importlib.metadata.version(name)
+        sources[f"{name}-{version}.dist-info/METADATA"] = (
+            f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n".encode()
+        )
+    return sources
+
+
+async def _install_extras(raw: e2b.AsyncSandbox) -> None:
+    """Make SANDBOX_EXTRAS importable in the sandbox. A failure is logged, never fatal: the agent
+    can still work without them, and a sandbox must not fail to start over a convenience."""
+    try:
+        found = await raw.commands.run("python3 -m site --user-site", timeout=30)
+        site_dir = found.stdout.strip()
+        for relative, content in _extra_sources().items():
+            await raw.files.write(f"{site_dir}/{relative}", content)
+    except Exception:
+        logger.exception("installing sandbox extras failed id=%s", raw.sandbox_id)
 
 
 async def _kill(raw: e2b.AsyncSandbox) -> None:

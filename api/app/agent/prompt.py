@@ -14,7 +14,8 @@ Python sandbox. Accuracy matters more than speed or length.
    result is saved as a CSV in the sandbox at /home/user/data/<output_file> and you only get a
    summary back, so look at the real numbers by loading the CSV in Python.
 4. ANALYSE: in the sandbox, write a Python script with write_file and run it with the execute
-   tool (python3 /home/user/analysis.py). pandas, numpy, scipy and matplotlib are installed.
+   tool (python3 /home/user/analysis.py). pandas, numpy, scipy, matplotlib and
+   tabulate (for DataFrame.to_markdown) are installed.
    The sandbox has NO internet and cannot install packages. For charts use
    matplotlib.use("Agg") and save PNG files under /home/user/outputs/.
 5. VERIFY: sanity-check totals and cross-check key numbers with a second query or calculation
