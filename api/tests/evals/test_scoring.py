@@ -133,6 +133,7 @@ def test_every_golden_question_has_a_supported_expectation() -> None:
         "mentions",
         "clarification",
         "privacy_safe",
+        "chart",
     }
     for q in GOLDEN.values():
         assert q["expected"]["kind"] in kinds, q["id"]
@@ -243,3 +244,35 @@ def test_cross_check_reports_disagreements() -> None:
     assert disagreement([(62.8,)], [(61.9,)]) == "row 1: 62.80 vs 61.90"
     assert disagreement([("a",)], [("a",), ("b",)]) == "1 rows vs 2 rows"
     assert disagreement([("Pro Tablet",)], [("Smart Eyeliner",)]) is not None
+
+
+# ----------------------------------------------------------------------------- batch 4 kinds
+def _chart_record(answer: str, artifacts: list[dict[str, Any]], claims: list[str]) -> Any:
+    record = _record(answer)
+    record.status = "ok"
+    record.artifacts = artifacts
+    record.unverified_file_claims = claims
+    return record
+
+
+def test_a_chart_must_really_be_delivered() -> None:
+    from evals.run import record_verdict
+
+    png = [{"name": "monthly.png", "mime": "image/png", "size": 1, "path": "x"}]
+    text = "Revenue dips in March 2025 and peaks every November and December."
+    assert record_verdict(GOLDEN["q072"], _chart_record(text, png, [])).passed
+    assert not record_verdict(GOLDEN["q072"], _chart_record(text, [], [])).passed
+    claimed = _chart_record(text, png, ["trend.png"])
+    assert not record_verdict(GOLDEN["q072"], claimed).passed  # names a file it never saved
+    assert not record_verdict(GOLDEN["q072"], _chart_record("Here is the chart.", png, [])).passed
+
+
+def test_significance_needs_a_named_test() -> None:
+    rates = "Footwear returns 33.67% of items vs 4.75% for all other categories"
+    assert check("q062", f"{rates}; a chi-square test gives p < 0.001.").passed
+    assert not check("q062", f"{rates}, which is clearly significant.").passed
+
+
+def test_month_over_month_must_name_november_not_april() -> None:
+    assert check("q063", "November had the largest jump: +46.3% over October.").passed
+    assert not check("q063", "April had the largest jump (+33.0%).").passed
