@@ -75,6 +75,17 @@ def record_verdict(question: dict[str, Any], record: RunRecord) -> Score:
         if not REFUSAL.search(normalize(record.final_answer)):
             reasons.append("did not clearly refuse")
         return Score(not reasons, 0.0 if reasons else 1.0, reasons)
+    if kind == "chart":
+        # The answer text is checked like `mentions`; the chart itself must really be delivered.
+        as_mentions = {**question, "expected": {**question["expected"], "kind": "mentions"}}
+        verdict = score(as_mentions, record.final_answer, record.sql, record.status)
+        images = [a for a in record.artifacts if str(a.get("mime", "")).startswith("image/")]
+        if not images:
+            verdict.fail("no chart image was delivered")
+        if record.unverified_file_claims:
+            verdict.fail(f"mentions files that do not exist: {record.unverified_file_claims[0]}")
+        verdict.score = 1.0 if verdict.passed else 0.0
+        return verdict
     return score(question, record.final_answer, record.sql, record.status)
 
 
