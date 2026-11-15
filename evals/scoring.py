@@ -1,8 +1,9 @@
 """Deterministic scoring of an agent run against a golden question (no model involved).
 
 Checks only what can be checked mechanically and explains every verdict, so a human can audit
-it: numbers within tolerance, the right item named first, required words, refusals, and that no
-write was attempted. Narrative quality is NOT judged here.
+it: numbers within tolerance, the right item named first, required words, statements the data
+contradicts (`must_not_say`, hand-written per question), refusals, and that no write was attempted.
+The wider narrative is checked separately, by a judge model (evals/judge.py, `--judge`).
 """
 
 from __future__ import annotations
@@ -217,6 +218,13 @@ def score(
     for options in question.get("must_mention") or []:
         if not any(_first_position(answer, str(o)) >= 0 for o in options):
             result.fail(f"did not mention {options[0]}")
+
+    # Claims the data contradicts, e.g. a wrong direction of change (the right numbers can sit
+    # next to a wrong explanation). Patterns are written per question, against the reference data.
+    for pattern in question.get("must_not_say") or []:
+        match = re.search(pattern, answer, re.IGNORECASE)
+        if match:
+            result.fail(f"contradicts the data: {match.group(0)[:80]!r}")
 
     if not result.passed and kind != "values":
         result.score = min(result.score, 0.5) if values else 0.0

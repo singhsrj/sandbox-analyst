@@ -4,6 +4,10 @@ Usage:
   uv run python -m evals.run --batch 1                 # one batch
   uv run python -m evals.run --ids q001,q011           # chosen questions
   uv run python -m evals.run --rescore runs/evals/golden-<stamp>.json   # re-score, no model calls
+  uv run python -m evals.run --rescore <file> --judge  # also check each explanation (judge tokens)
+
+--judge asks JUDGE_MODEL whether the answer's explanation contradicts the reference SQL's real
+result (evals/judge.py). It is reported in its own column and does not change `passed`.
 
 Writes runs/evals/golden-<stamp>.json (raw run records + scores) and prints a Markdown report.
 Only approved questions run unless --include-pending is given. One model (ADR-024).
@@ -20,9 +24,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from app.agent.models import get_model
 from app.agent.runner import RunRecord, run_question
-from app.config import get_settings
+from app.config import Settings, get_settings
+from evals import judge as narrative
 from evals.golden_check import load
+from evals.golden_check import run as run_reference
 from evals.injection import abusive_code
 from evals.injection import score as injection_score
 from evals.scoring import REFUSAL, Score, normalize, score
@@ -89,7 +96,9 @@ def record_verdict(question: dict[str, Any], record: RunRecord) -> Score:
     return score(question, record.final_answer, record.sql, record.status)
 
 
-def evaluate(question: dict[str, Any], record: RunRecord) -> dict[str, Any]:
+def evaluate(
+    question: dict[str, Any], record: RunRecord, story: narrative.Verdict | None = None
+) -> dict[str, Any]:
     verdict = record_verdict(question, record)
     return {
         "id": question["id"],
@@ -105,19 +114,46 @@ def evaluate(question: dict[str, Any], record: RunRecord) -> dict[str, Any]:
         "sql_queries": len(record.sql),
         "unverified_file_claims": record.unverified_file_claims,
         "trace_url": record.trace_url,
+        "narrative": story.as_dict() if story else None,
     }
+
+
+async def judge_all(
+    pairs: list[tuple[dict[str, Any], RunRecord]], settings: Settings, concurrency: int
+) -> dict[str, narrative.Verdict]:
+    """Narrative verdicts for every eligible question; each reference query runs once."""
+    model = get_model(settings, provider=settings.judge_provider, model=settings.judge_model)
+    defs = narrative.definitions()
+    gate = asyncio.Semaphore(concurrency)
+
+    async def one(q: dict[str, Any], record: RunRecord) -> tuple[str, narrative.Verdict]:
+        if not narrative.eligible(q):
+            return q["id"], narrative.Verdict("skipped", reason="no data story to check")
+        async with gate:
+            try:
+                columns, rows = await asyncio.to_thread(run_reference, q["reference_sql"])
+            except Exception as exc:
+                return q["id"], narrative.Verdict("error", reason=f"reference query: {exc}"[:300])
+            reference = narrative.reference_table(columns, rows)
+            story = await narrative.judge(model, q, record.final_answer, reference, defs)
+            print(f"    judge {q['id']} {story.verdict}", file=sys.stderr, flush=True)
+            return q["id"], story
+
+    return dict(await asyncio.gather(*(one(q, r) for q, r in pairs)))
 
 
 def report(results: list[dict[str, Any]], model: str) -> str:
     lines = [
-        "| id | category | pass | score | why not | tokens | s |",
-        "|---|---|---|---|---|---|---|",
+        "| id | category | pass | score | why not | story | tokens | s |",
+        "|---|---|---|---|---|---|---|---|",
     ]
     for r in results:
         why = "; ".join(r["reasons"]) or ""
+        story = (r.get("narrative") or {}).get("verdict", "")
+        story = {"fail": "CONTRADICTS", "skipped": ""}.get(story, story)
         lines.append(
             f"| {r['id']} | {r['category']} | {'yes' if r['passed'] else 'NO'} | {r['score']:.2f} "
-            f"| {why[:110]} | {r['tokens']:,} | {r['seconds']:.0f} |"
+            f"| {why[:110]} | {story} | {r['tokens']:,} | {r['seconds']:.0f} |"
         )
     by_cat: dict[str, list[bool]] = defaultdict(list)
     for r in results:
@@ -132,6 +168,23 @@ def report(results: list[dict[str, Any]], model: str) -> str:
         f"(max {max(tokens, default=0):,}).",
         f"Runs that did not end ok: {sum(r['status'] != 'ok' for r in results)}.",
     ]
+    judged = [r for r in results if r.get("narrative")]
+    if judged:
+        count: dict[str, int] = defaultdict(int)
+        for r in judged:
+            count[r["narrative"]["verdict"]] += 1
+        lines.append(
+            f"Narrative check: {count['pass']} consistent, {count['fail']} contradict the data, "
+            f"{count['error']} judge errors, {count['skipped']} not judged."
+        )
+        # Every contradiction is listed so a human can check the judge (it can be wrong too).
+        for r in judged:
+            for c in r["narrative"]["contradictions"]:
+                lines.append(
+                    f'- {r["id"]} ({c["kind"]}): says "{c["claim"][:160]}"; data: {c["data"][:160]}'
+                )
+            if r["narrative"]["verdict"] == "error":
+                lines.append(f"- {r['id']}: judge error: {r['narrative']['reason'][:160]}")
     return "\n".join(lines)
 
 
@@ -143,6 +196,9 @@ async def main() -> None:
     parser.add_argument("--concurrency", type=int, default=2)
     parser.add_argument("--include-pending", action="store_true")
     parser.add_argument("--rescore", help="re-score a saved results file instead of running")
+    parser.add_argument(
+        "--judge", action="store_true", help="also check each explanation against the data"
+    )
     args = parser.parse_args()
     settings = get_settings()
     golden = {q["id"]: q for q in load()}
@@ -167,7 +223,8 @@ async def main() -> None:
         pairs = list(await asyncio.gather(*(one(q) for q in questions)))
 
     pairs.sort(key=lambda p: p[0]["id"])
-    results = [evaluate(q, r) for q, r in pairs]
+    stories = await judge_all(pairs, settings, args.concurrency) if args.judge else {}
+    results = [evaluate(q, r, stories.get(q["id"])) for q, r in pairs]
     out_dir = settings.artifacts_dir / "evals"
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f"golden-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}.json"
@@ -175,6 +232,7 @@ async def main() -> None:
         json.dumps(
             {
                 "model": model,
+                "judge_model": settings.judge_model if args.judge else None,
                 "results": results,
                 "records": {q["id"]: r.__dict__ for q, r in pairs},
             },
