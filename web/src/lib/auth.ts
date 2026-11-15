@@ -1,92 +1,37 @@
 /**
- * Access-code login (ADR-006): the code is exchanged for a short-lived bearer token.
+ * Accounts (ADR-028): people sign in with Clerk; the API verifies Clerk's short-lived session
+ * token, sent as `Authorization: Bearer` (ADR-006: no cross-site cookies).
  *
- * - `clientId` identifies this browser's threads. It is stored in localStorage and is not a secret.
- * - The token lives in sessionStorage (cleared when the tab closes). Reading it requires script
- *   access, so the app avoids dangerouslySetInnerHTML on model output; expiry is short.
+ * - The token comes from Clerk (`useAuth().getToken()`, which refreshes it). `useSession` installs
+ *   that function here, so the API client and the chat transport never touch Clerk directly and
+ *   tests can install a fake.
+ * - Signing in says who you are. Live questions cost money, so an account also enters the access
+ *   code once (`enterAccessCode`); the server remembers it.
+ * - Nothing is stored in localStorage or sessionStorage by this module.
  */
 import { API_BASE_URL } from "./config";
 
-const CLIENT_ID_KEY = "sa.clientId";
-const TOKEN_KEY = "sa.token";
+export type TokenProvider = () => Promise<string | null>;
 
-export interface StoredSession {
-  token: string;
-  expiresAt: number; // unix seconds
+let tokenProvider: TokenProvider = async () => null;
+
+export function setTokenProvider(provider: TokenProvider): void {
+  tokenProvider = provider;
 }
 
-function safeGet(storage: "localStorage" | "sessionStorage", key: string): string | null {
+/** The current session token, or null when signed out (or when Clerk cannot refresh it). */
+export async function getToken(): Promise<string | null> {
   try {
-    return window[storage].getItem(key);
-  } catch {
-    return null; // private mode / blocked storage: the app still works, just without persistence
-  }
-}
-
-function safeSet(storage: "localStorage" | "sessionStorage", key: string, value: string | null) {
-  try {
-    if (value === null) window[storage].removeItem(key);
-    else window[storage].setItem(key, value);
-  } catch {
-    /* ignore */
-  }
-}
-
-export function getClientId(): string {
-  const existing = safeGet("localStorage", CLIENT_ID_KEY);
-  if (existing && /^[A-Za-z0-9_-]{8,64}$/.test(existing)) return existing;
-  const bytes = crypto.getRandomValues(new Uint8Array(16));
-  const id = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
-  safeSet("localStorage", CLIENT_ID_KEY, id);
-  return id;
-}
-
-function parseSession(raw: string | null, now: number): StoredSession | null {
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(raw) as StoredSession;
-    if (typeof parsed.token !== "string" || typeof parsed.expiresAt !== "number") return null;
-    return parsed.expiresAt > now + 5 ? parsed : null;
+    return await tokenProvider();
   } catch {
     return null;
   }
 }
 
-export function getSession(now = Date.now() / 1000): StoredSession | null {
-  return parseSession(safeGet("sessionStorage", TOKEN_KEY), now);
-}
-
-// --- change notification so React can subscribe with useSyncExternalStore -------------------
-const listeners = new Set<() => void>();
-const notify = () => listeners.forEach((listener) => listener());
-
-export function subscribeSession(listener: () => void): () => void {
-  listeners.add(listener);
-  return () => listeners.delete(listener);
-}
-
-let cachedRaw: string | null | undefined;
-let cachedSession: StoredSession | null = null;
-
-/** Stable snapshot: the same object until the stored token (or its expiry) changes. */
-export function getSessionSnapshot(): StoredSession | null {
-  const raw = safeGet("sessionStorage", TOKEN_KEY);
-  if (raw !== cachedRaw) {
-    cachedRaw = raw;
-    cachedSession = parseSession(raw, Date.now() / 1000);
-  } else if (cachedSession && cachedSession.expiresAt <= Date.now() / 1000 + 5) {
-    cachedSession = null;
-  }
-  return cachedSession;
-}
-
-export function getToken(): string | null {
-  return getSession()?.token ?? null;
-}
-
-export function clearSession(): void {
-  safeSet("sessionStorage", TOKEN_KEY, null);
-  notify();
+export interface Me {
+  user_id: string;
+  live_access: boolean;
+  live_runs_enabled: boolean;
 }
 
 export class LoginError extends Error {
@@ -99,33 +44,40 @@ export class LoginError extends Error {
   }
 }
 
-export async function login(code: string, fetchImpl: typeof fetch = fetch): Promise<StoredSession> {
+/** Unlock live questions for this account. Throws LoginError with a message for the dialog. */
+export async function enterAccessCode(code: string, fetchImpl: typeof fetch = fetch): Promise<void> {
+  const token = await getToken();
+  if (!token) throw new LoginError("Sign in first, then enter the code.", 401);
   let response: Response;
   try {
-    response = await fetchImpl(`${API_BASE_URL}/api/session`, {
+    response = await fetchImpl(`${API_BASE_URL}/api/access`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code, client_id: getClientId() }),
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ code }),
     });
   } catch {
     throw new LoginError("Can't reach the server. Check your connection and try again.", 0);
   }
-  if (!response.ok) {
-    const retry = Number(response.headers.get("Retry-After")) || undefined;
-    const message =
-      response.status === 401
+  if (response.ok) return;
+  const retry = Number(response.headers.get("Retry-After")) || undefined;
+  const message =
+    response.status === 401
+      ? (await detail(response)) === "Invalid access code."
         ? "That access code isn't right."
-        : response.status === 429
-          ? `Too many attempts. Try again in ${retry ?? 60} seconds.`
-          : response.status === 503
-            ? "Live runs aren't enabled on this server."
-            : "Sign-in failed. Try again.";
-    throw new LoginError(message, response.status, retry);
+        : "Your sign-in has expired. Sign in again."
+      : response.status === 429
+        ? `Too many attempts. Try again in ${retry ?? 60} seconds.`
+        : response.status === 503
+          ? "Live runs aren't enabled on this server."
+          : "That didn't work. Try again.";
+  throw new LoginError(message, response.status, retry);
+}
+
+async function detail(response: Response): Promise<string | null> {
+  try {
+    const body = (await response.json()) as { detail?: unknown };
+    return typeof body.detail === "string" ? body.detail : null;
+  } catch {
+    return null;
   }
-  const body = (await response.json()) as { token: string; expires_at: number; client_id: string };
-  const session = { token: body.token, expiresAt: body.expires_at };
-  safeSet("sessionStorage", TOKEN_KEY, JSON.stringify(session));
-  notify();
-  if (/^[A-Za-z0-9_-]{8,64}$/.test(body.client_id)) safeSet("localStorage", CLIENT_ID_KEY, body.client_id);
-  return session;
 }

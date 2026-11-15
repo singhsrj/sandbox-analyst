@@ -13,6 +13,7 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from app import __version__
 from app.api.deps import Services
 from app.api.routes import router
+from app.auth import ClerkVerifier
 from app.config import Settings, get_settings
 from app.db.app_store import AppStore, make_pool
 from app.observability import init_langfuse
@@ -43,7 +44,8 @@ async def open_services(settings: Settings) -> AsyncIterator[Services]:
             login_limiter=RateLimiter(settings.login_attempts_per_minute),
             chat_limiter=RateLimiter(settings.rate_limit_per_minute),
             run_ip_limiter=RateLimiter(settings.runs_per_ip_per_hour, 3600),
-            session_ip_limiter=RateLimiter(settings.sessions_per_ip_per_hour, 3600),
+            suggestion_limiter=RateLimiter(settings.suggestions_per_ip_per_hour, 3600),
+            verifier=ClerkVerifier(settings) if settings.clerk_issuer else None,
             replays=ReplayStore(settings.replays_dir),
         )
         try:

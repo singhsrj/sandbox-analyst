@@ -19,15 +19,18 @@ Next.js 16, and its APIs differ from older versions (see `AGENTS.md`).
 | Chat/stream UI | AI Elements in `src/components/ai-elements/`, AI SDK (`ai`, `@ai-sdk/react`) | Hand-rolled stream parsing |
 | Markdown | `streamdown` (no raw HTML) | `dangerouslySetInnerHTML` |
 | Icons | `lucide-react`, named `XxxIcon` imports | Other icon sets, emoji as icons |
+| Accounts | Clerk (`@clerk/nextjs`): modal `SignInButton`, `UserButton`, `useAuth` | Own sign-in pages, reading Clerk tokens in components |
 | Class merging | `cn()` from `@/lib/utils` | String concatenation for conditional classes |
 
 | Path | What belongs there |
 |---|---|
-| `src/components/app/` | Our components. One component (plus small private helpers) per file, kebab-case file names, PascalCase exports |
+| `src/app/page.tsx`, `src/components/landing/` | The public landing page at `/` |
+| `src/app/app/page.tsx`, `src/components/app/` | The workspace at `/app`. One component (plus small private helpers) per file, kebab-case file names, PascalCase exports |
+| `src/proxy.ts` | Clerk's request handler and the redirect for old `/?t=` / `/?replay=` links |
 | `src/components/ui/`, `src/components/ai-elements/` | Vendored registry copies. Not linted. Add with the shadcn CLI; change only when a real need cannot be met by props or `className` |
 | `src/lib/` | Framework-free logic: API client, auth, parsing, formatting. Unit-tested |
 | `src/hooks/` | React hooks (`use-xxx.ts`) |
-| `src/test-utils/` | Test helpers (`fake-api.ts`) |
+| `src/test-utils/` | Test helpers (`fake-api.ts`, `clerk-mock.tsx`) |
 
 Imports use the `@/` alias, never long relative paths across folders.
 
@@ -89,7 +92,10 @@ transparent background that would be unreadable on the dark theme.
 
 | Use | Classes |
 |---|---|
-| Page title (empty state only, one per screen) | `text-3xl font-semibold tracking-tight text-balance max-w-[22ch]` |
+| Landing hero title (one per page) | `text-4xl md:text-5xl font-semibold tracking-tight text-balance max-w-[18ch]` |
+| Landing section title | `text-2xl md:text-3xl font-semibold tracking-tight text-balance` |
+| Eyebrow above a hero title | `text-xs font-medium tracking-wide uppercase text-muted-foreground` |
+| Page title (workspace empty state, one per screen) | `text-3xl font-semibold tracking-tight text-balance max-w-[22ch]` |
 | Lead paragraph | `leading-7 text-muted-foreground max-w-[58ch]` |
 | Section / panel heading | `text-sm font-semibold` (`h2`) or `text-sm font-medium` (`h3`) |
 | Body | `text-sm` (example-question list uses `text-[15px] leading-6`) |
@@ -110,6 +116,11 @@ Keep line length readable: prose `max-w-[58ch]`, the conversation column `max-w-
   up; below `md` the sidebar is a drawer (`fixed inset-0 z-40`, `role="dialog" aria-modal="true"`,
   panel `w-[85%] max-w-xs shadow-lg`, backdrop button that closes it).
 - **Content column:** `mx-auto w-full max-w-[46rem] px-5`, vertical rhythm `py-8 md:py-12`.
+- **Landing page:** sections are `border-t`, content `mx-auto max-w-6xl px-5 py-16 md:py-24`, anchors
+  get `scroll-mt-14` (below the sticky `h-14` header). Grids of cards use rules, not shadows:
+  `grid gap-px overflow-hidden rounded-sm border bg-border` with `bg-card p-5` children.
+- **Grid children that hold truncated or wide content need `min-w-0`**, or they refuse to shrink and
+  push the page wider than a phone (found on the landing hero).
 - **Spacing:** Tailwind's scale, mostly `gap-1.5 … gap-4`, `p-3` inside cards, `px-4 py-2` for list
   rows. Prefer `grid gap-*` / `flex gap-*` over margins between siblings.
 - **Scroll areas:** a flex child that scrolls needs `min-h-0` (and `min-w-0` for horizontal
@@ -154,7 +165,25 @@ utility soup in a component.
 
 ---
 
-## 8. Dark mode
+## 8. Accounts (Clerk)
+
+- `ClerkProvider` sits inside `<body>` in `layout.tsx` with an `appearance` made of our CSS variables,
+  so Clerk's modal and user menu follow the theme and dark mode. Its styles live in the `clerk` CSS
+  layer (declared at the top of `globals.css`), below our components and utilities.
+- Components never call Clerk for tokens. `useSession()` (`src/hooks/use-session.ts`) installs
+  Clerk's `getToken` into `src/lib/auth.ts`; `lib/api.ts` and the chat transport ask that module.
+  Other components use `useSession()` (workspace) or `useAuth()` only for signed-in/out display
+  (landing header).
+- Signing in gives history; live questions also need the access code (`liveAccess`). Prompt with
+  Clerk's sign-in when signed out or expired, and with the access-code dialog otherwise.
+- Public parts (landing page, recorded runs, schema) must never wait for Clerk to load.
+- Never add sign-in pages or routes of our own; use `SignInButton mode="modal"` / `openSignIn()`.
+- Tests: `@clerk/nextjs` is replaced globally by `src/test-utils/clerk-mock.tsx`; drive it with
+  `clerk.signIn()`, `clerk.autoSignIn = false`, `clerk.setLoaded(false)`.
+
+---
+
+## 9. Dark mode
 
 - The theme is the `dark` class on `<html>`, set before first paint by the inline script in
   `layout.tsx` (stored in `localStorage.theme`, falling back to the system setting). `ThemeToggle`
@@ -165,7 +194,7 @@ utility soup in a component.
 
 ---
 
-## 9. Component code conventions
+## 10. Component code conventions
 
 - `"use client"` at the top of interactive components (most of `components/app/`).
 - Props: a named `interface XxxProps` (or an inline type for 1–3 props), documented with `/** */`
@@ -174,10 +203,10 @@ utility soup in a component.
   storing them.
 - Browser APIs (`localStorage`, `sessionStorage`, `history`) are wrapped in `try/catch`: the app
   must still work in private mode or with storage blocked.
-- **Data:** all HTTP goes through `src/lib/api.ts` (`request()`), which adds the bearer token, maps
-  401 to `AuthRequiredError` and turns failures into readable `ApiError` messages. Components catch
-  `AuthRequiredError` and call `signOut()` / ask to sign in again; never `fetch` the API directly
-  from a component (except the chat transport, which receives `fetchImpl`).
+- **Data:** all HTTP goes through `src/lib/api.ts` (`request()`), which adds the Clerk session token,
+  maps 401 to `AuthRequiredError` and turns failures into readable `ApiError` messages. Components
+  ask the person to sign in again on `AuthRequiredError`; never `fetch` the API directly from a
+  component (except the chat transport, which receives `fetchImpl`).
 - New API calls get types in `src/lib/types.ts`.
 - **States every view handles:** loading (`role="status"`, `text-sm text-muted-foreground`,
   "Loading…"), empty (one helpful sentence that says what to do next), error (`role="alert"`,
@@ -192,7 +221,7 @@ be undone." Use sentence case for buttons and headings, an ellipsis character (`
 
 ---
 
-## 10. Accessibility checklist
+## 11. Accessibility checklist
 
 - Real elements: `button` for actions, `a` for navigation, lists for lists, one `h1` per screen.
 - Every input has a `<label htmlFor>` (use `useId()` for ids); errors use `aria-invalid` and
@@ -205,7 +234,7 @@ be undone." Use sentence case for buttons and headings, an ellipsis character (`
 
 ---
 
-## 11. Security rules (from `README.md`, non-negotiable)
+## 12. Security rules (from `README.md`, non-negotiable)
 
 - No `dangerouslySetInnerHTML` (the theme script in `layout.tsx` is the only exception).
 - Model output renders through `streamdown` without raw HTML; no math/mermaid plugins.
@@ -216,7 +245,7 @@ be undone." Use sentence case for buttons and headings, an ellipsis character (`
 
 ---
 
-## 12. Tests and checks
+## 13. Tests and checks
 
 - **Component tests** (Vitest + Testing Library) live in `__tests__/` next to the code. Render the
   real component with `createFakeApi()` from `@/test-utils/fake-api`, drive it with `userEvent`, and
@@ -235,13 +264,13 @@ npm run lint && npm run typecheck && npm test && npm run build
 
 ---
 
-## 13. Before you finish a frontend change
+## 14. Before you finish a frontend change
 
 - [ ] Only tokens and existing patterns used; no hex or palette colours in components
 - [ ] Looks right in light **and** dark
 - [ ] Works at phone width with no horizontal scroll
 - [ ] Loading, empty and error states handled with the right roles
-- [ ] Keyboard and screen-reader basics from section 10
-- [ ] Security rules from section 11
+- [ ] Keyboard and screen-reader basics from section 11
+- [ ] Security rules from section 12
 - [ ] Tests added or updated; the check command passes
 - [ ] This file updated if you added a token, a pattern or a convention

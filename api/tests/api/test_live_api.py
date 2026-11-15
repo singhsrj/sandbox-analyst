@@ -14,8 +14,10 @@ import psycopg
 import pytest
 from fastapi.testclient import TestClient
 
+from app.auth import ClerkVerifier
 from app.config import get_settings
 from app.main import create_app
+from tests.helpers import ISSUER, WEB_ORIGIN, clerk_keys, clerk_token
 
 settings = get_settings()
 pytestmark = pytest.mark.integration
@@ -27,7 +29,6 @@ needs_everything = pytest.mark.skipif(
             settings.e2b_api_key,
             settings.bedrock_api_key,
             settings.demo_access_code,
-            settings.session_token_secret,
         ]
     ),
     reason="live credentials not configured",
@@ -66,10 +67,18 @@ def test_two_turns_in_one_thread_end_to_end() -> None:
     truth_2025, truth_2024 = cancelled_orders(2025), cancelled_orders(2024)
 
     with TestClient(create_app()) as client:
-        session = client.post("/api/session", json={"code": settings.secret("demo_access_code")})
-        assert session.status_code == 200
-        headers = {"Authorization": f"Bearer {session.json()['token']}"}
         services = client.app.state.services  # type: ignore[attr-defined]
+        # Sign-in itself needs a browser and Clerk; here a test key signs the session token and
+        # everything after it (user row, access code, ownership) runs for real (needs 0004).
+        test_settings = settings.model_copy(
+            update={"clerk_issuer": ISSUER, "cors_allow_origins": [WEB_ORIGIN]}
+        )
+        services.verifier = ClerkVerifier(test_settings, keys=clerk_keys())
+        headers = {"Authorization": f"Bearer {clerk_token(f'user_it_{uuid.uuid4().hex[:8]}')}"}
+        access = client.post(
+            "/api/access", json={"code": settings.secret("demo_access_code")}, headers=headers
+        )
+        assert access.status_code == 200, access.text
 
         # ---------- turn 1: a question that needs SQL + a chart ----------
         first = ask(

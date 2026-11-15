@@ -7,6 +7,7 @@ else behaves exactly like a thread that does not exist (no information leak).
 from __future__ import annotations
 
 import json
+import secrets
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, cast
@@ -37,6 +38,16 @@ class ThreadInfo:
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
         }
+
+
+@dataclass(frozen=True)
+class UserInfo:
+    user_id: str
+    live_access: bool
+
+
+def new_user_id() -> str:
+    return f"u_{secrets.token_hex(12)}"
 
 
 def make_pool(settings: Settings) -> AsyncConnectionPool[Any]:
@@ -204,3 +215,28 @@ class AppStore:
             row["run_id"] = str(row["run_id"])
             row["created_at"] = row["created_at"].isoformat()
         return rows
+
+    # ------------------------------------------------------------------ accounts (ADR-028)
+    async def user_for(self, provider: str, provider_sub: str) -> UserInfo:
+        """Our user for this provider identity, created on first sign-in."""
+        async with self._pool.connection() as conn:
+            cur = await conn.execute(
+                "INSERT INTO app.users (user_id, provider, provider_sub) VALUES (%s, %s, %s) "
+                "ON CONFLICT (provider, provider_sub) DO UPDATE SET last_seen_at = now() "
+                "RETURNING user_id, live_access_at IS NOT NULL AS live_access",
+                (new_user_id(), provider, provider_sub),
+            )
+            row = cast(dict[str, Any], await cur.fetchone())
+        return UserInfo(user_id=row["user_id"], live_access=bool(row["live_access"]))
+
+    async def grant_live_access(self, user_id: str) -> None:
+        async with self._pool.connection() as conn:
+            await conn.execute(
+                "UPDATE app.users SET live_access_at = coalesce(live_access_at, now()) "
+                "WHERE user_id = %s",
+                (user_id,),
+            )
+
+    async def add_suggestion(self, body: str) -> None:
+        async with self._pool.connection() as conn:
+            await conn.execute("INSERT INTO app.suggestions (body) VALUES (%s)", (body,))

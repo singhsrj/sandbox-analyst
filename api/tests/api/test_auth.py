@@ -1,64 +1,86 @@
+"""Clerk session-token verification and the access-code check (ADR-028)."""
+
 from __future__ import annotations
 
-import base64
-import json
+import time
 
 import pytest
+from cryptography.hazmat.primitives.asymmetric import rsa
 
-from app.auth import (
-    AuthError,
-    code_is_valid,
-    issue_token,
-    normalize_client_id,
-    verify_token,
-)
+from app.auth import AuthError, ClerkVerifier, code_is_valid
 from app.config import Settings
-from tests.helpers import make_settings
-
-SECRET = "s" * 40
+from tests.helpers import ISSUER, WEB_ORIGIN, clerk_keys, clerk_token, make_settings
 
 
 def settings(**extra: str) -> Settings:
-    return make_settings(DEMO_ACCESS_CODE="open-sesame", SESSION_TOKEN_SECRET=SECRET, **extra)
+    values = {"CLERK_ISSUER": ISSUER, "CORS_ALLOW_ORIGINS": WEB_ORIGIN, **extra}
+    return make_settings(DEMO_ACCESS_CODE="open-sesame", **values)
 
 
-def test_a_fresh_token_verifies_and_carries_the_owner() -> None:
-    token, expires_at = issue_token(settings(), "client-abc-123", now=1_000)
-    session = verify_token(settings(), token, now=1_001)
-    assert session.owner_id == "client-abc-123" and session.expires_at == expires_at
+def verifier(**extra: str) -> ClerkVerifier:
+    return ClerkVerifier(settings(**extra), keys=clerk_keys())
 
 
-def test_token_expires_exactly_at_the_ttl() -> None:
-    s = settings(SESSION_TOKEN_TTL_MINUTES="10")
-    token, expires_at = issue_token(s, "client-abc-123", now=0)
-    assert expires_at == 600
-    verify_token(s, token, now=599)
-    with pytest.raises(AuthError, match="expired"):
-        verify_token(s, token, now=600)
+async def test_a_valid_token_names_the_clerk_user() -> None:
+    identity = await verifier().verify(clerk_token("user_abc123"))
+    assert identity.provider_sub == "user_abc123"
+    assert identity.expires_at > time.time()
 
 
-def test_tampered_payload_or_signature_is_rejected() -> None:
-    token, _ = issue_token(settings(), "client-abc-123", now=0)
-    body, signature = token.split(".")
-    forged_payload = base64.urlsafe_b64encode(
-        json.dumps({"sub": "someone-else-1", "exp": 9_999_999_999}).encode()
-    ).rstrip(b"=")
-    for bad in (f"{forged_payload.decode()}.{signature}", f"{body}.AAAA", f"{body}.", body):
-        with pytest.raises(AuthError):
-            verify_token(settings(), bad, now=1)
-
-
-def test_token_signed_with_another_secret_is_rejected() -> None:
-    other = make_settings(SESSION_TOKEN_SECRET="x" * 40)
-    token, _ = issue_token(other, "client-abc-123", now=0)
+@pytest.mark.parametrize(
+    ("why", "token"),
+    [
+        ("expired", lambda: clerk_token(now=time.time() - 3600)),
+        ("not yet valid", lambda: clerk_token(nbf=int(time.time()) + 600)),
+        ("another issuer", lambda: clerk_token(iss="https://evil.clerk.accounts.dev")),
+        ("another origin", lambda: clerk_token(azp="https://evil.example")),
+        ("no origin", lambda: clerk_token(azp=None)),
+        ("no subject", lambda: clerk_token(sub=None)),  # type: ignore[arg-type]
+        ("bad subject", lambda: clerk_token("user/../../etc")),
+        (
+            "signed by another key",
+            lambda: clerk_token(key=rsa.generate_private_key(public_exponent=65537, key_size=2048)),
+        ),
+        ("junk", lambda: "not.a.jwt"),
+    ],
+)
+async def test_bad_tokens_are_rejected(why: str, token: object) -> None:
     with pytest.raises(AuthError):
-        verify_token(settings(), token, now=1)
+        await verifier().verify(token())  # type: ignore[operator]
 
 
-@pytest.mark.parametrize("token", [None, "", "garbage", "a.b.c", "....", "é.é"])
-def test_garbage_tokens_never_raise_anything_but_autherror(token: str | None) -> None:
+async def test_hs256_token_is_rejected() -> None:
+    """Algorithm confusion: a token 'signed' with HMAC must never pass the RS256 check."""
+    import jwt
+
+    now = int(time.time())
+    forged = jwt.encode(
+        {
+            "iss": ISSUER,
+            "sub": "user_x",
+            "azp": WEB_ORIGIN,
+            "iat": now,
+            "nbf": now,
+            "exp": now + 60,
+        },
+        "s" * 64,
+        algorithm="HS256",
+    )
     with pytest.raises(AuthError):
-        verify_token(settings(), token)
+        await verifier().verify(forged)
+
+
+async def test_authorized_parties_default_to_cors_origins_and_can_be_set() -> None:
+    other = "https://sandbox-analyst.vercel.app"
+    with pytest.raises(AuthError):
+        await verifier().verify(clerk_token(azp=other))
+    custom = verifier(CLERK_AUTHORIZED_PARTIES=f"{WEB_ORIGIN},{other}")
+    assert (await custom.verify(clerk_token(azp=other))).provider_sub == "user_test1"
+
+
+def test_issuer_must_be_https() -> None:
+    with pytest.raises(RuntimeError):
+        ClerkVerifier(settings(CLERK_ISSUER="http://test.clerk.accounts.dev"), keys=clerk_keys())
 
 
 def test_access_code_check() -> None:
@@ -72,10 +94,3 @@ def test_no_configured_code_means_nobody_gets_in() -> None:
     unconfigured = make_settings()
     assert not code_is_valid(unconfigured, "")
     assert not code_is_valid(unconfigured, "anything")
-
-
-def test_client_ids_are_validated_or_replaced() -> None:
-    assert normalize_client_id("abcdef123456") == "abcdef123456"
-    for bad in (None, "", "short", "has spaces in it", "../../etc", "x" * 100):
-        generated = normalize_client_id(bad)
-        assert generated != bad and len(generated) == 32

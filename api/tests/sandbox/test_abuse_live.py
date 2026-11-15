@@ -77,7 +77,6 @@ async def test_no_secret_value_is_visible_anywhere_in_the_sandbox(
             "langfuse_secret_key",
             "langfuse_public_key",
             "demo_access_code",
-            "session_token_secret",
         )
         if getattr(settings, name) is not None
     ]

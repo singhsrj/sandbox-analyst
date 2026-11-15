@@ -54,7 +54,6 @@ SECRET_SETTINGS = (
     "admin_database_url",
     "langfuse_secret_key",
     "demo_access_code",
-    "session_token_secret",
 )
 
 

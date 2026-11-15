@@ -1,5 +1,6 @@
 "use client";
 
+import { UserButton } from "@clerk/nextjs";
 import { PlusIcon, Trash2Icon, XIcon } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -19,8 +20,10 @@ interface SidebarProps {
   schema: SchemaTable[] | null;
   schemaError: string | null;
   signedIn: boolean;
+  /** Signed in and the access code entered. */
+  liveAccess: boolean;
   onRequestSignIn: () => void;
-  onSignOut: () => void;
+  onRequestAccess: () => void;
   onClose?: () => void;
 }
 
@@ -76,18 +79,25 @@ export function Sidebar(props: SidebarProps) {
         {tab === "history" ? <ThreadList {...props} /> : <SchemaBrowser tables={props.schema} error={props.schemaError} />}
       </div>
 
-      <div className="flex items-center justify-between border-t px-3 py-2">
+      <div className="flex items-center justify-between gap-2 border-t px-3 py-2">
         {props.signedIn ? (
-          <button
-            onClick={props.onSignOut}
-            className="rounded-sm px-1 text-xs text-muted-foreground hover:text-foreground"
-          >
-            Live questions on · Lock
-          </button>
+          <div className="flex min-w-0 items-center gap-2">
+            <UserButton />
+            {props.liveAccess ? (
+              <span className="truncate text-xs text-muted-foreground">Live questions on</span>
+            ) : (
+              <button
+                onClick={props.onRequestAccess}
+                className="truncate rounded-sm px-1 text-xs underline underline-offset-2"
+              >
+                Enter access code
+              </button>
+            )}
+          </div>
         ) : (
-          <button onClick={props.onRequestSignIn} className="rounded-sm px-1 text-xs underline underline-offset-2">
-            Enter access code
-          </button>
+          <Button variant="outline" size="sm" onClick={props.onRequestSignIn}>
+            Sign in
+          </Button>
         )}
         <ThemeToggle />
       </div>
@@ -99,11 +109,10 @@ function ThreadList({ threads, activeThreadId, onSelectThread, onDeleteThread, s
   if (!signedIn) {
     return (
       <p className="p-4 text-sm text-muted-foreground">
-        Your past questions appear here after you{" "}
         <button onClick={onRequestSignIn} className="underline underline-offset-2">
-          enter the access code
-        </button>
-        .
+          Sign in
+        </button>{" "}
+        to keep your questions. They stay with your account on any device.
       </p>
     );
   }

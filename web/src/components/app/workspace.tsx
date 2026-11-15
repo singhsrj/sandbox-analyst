@@ -36,7 +36,7 @@ interface Opened {
 const REPLAY_ID = /^[a-z0-9][a-z0-9-]{1,59}$/;
 
 export function Workspace({ fetchImpl }: { fetchImpl?: typeof fetch }) {
-  const { signedIn, ready, signIn, signOut } = useSession();
+  const { signedIn, liveAccess, accessKnown, ready, openSignIn, unlock } = useSession();
   const [opened, setOpened] = useState<Opened | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [threads, setThreads] = useState<ThreadSummary[]>([]);
@@ -68,12 +68,11 @@ export function Workspace({ fetchImpl }: { fetchImpl?: typeof fetch }) {
         setOpened({ id, messages: await runsToMessages(runs) });
         window.history.replaceState(null, "", `?t=${id}`);
       } catch (err) {
-        if (err instanceof AuthRequiredError) signOut();
         setLoadError(err instanceof Error ? err.message : "Could not open that conversation.");
         startNew();
       }
     },
-    [signOut, startNew],
+    [startNew],
   );
 
   const openReplay = useCallback(
@@ -95,12 +94,11 @@ export function Workspace({ fetchImpl }: { fetchImpl?: typeof fetch }) {
 
   const refreshThreads = useCallback(async () => {
     try {
-      const list = await listThreads();
-      setThreads(list);
-    } catch (err) {
-      if (err instanceof AuthRequiredError) signOut();
+      setThreads(await listThreads());
+    } catch {
+      /* the list stays as it was; a 401 surfaces on the next action */
     }
-  }, [signOut]);
+  }, []);
 
   // Public data: examples and the schema never need an access code.
   useEffect(() => {
@@ -117,17 +115,21 @@ export function Workspace({ fetchImpl }: { fetchImpl?: typeof fetch }) {
 
   // First load: reopen the thread named in the URL if we can, otherwise start a new one.
   // (Deferred past an await so state is not set synchronously inside the effect.)
+  // Only a saved conversation (?t=) waits for Clerk: it needs the account. A recorded run or a
+  // new question opens at once, so the public parts work even if Clerk is slow or blocked.
   const booted = useRef(false);
   useEffect(() => {
-    if (!ready || booted.current) return;
+    if (booted.current) return;
+    const params = new URLSearchParams(window.location.search);
+    const wanted = params.get("t");
+    const replay = params.get("replay");
+    const needsAccount = !(replay && REPLAY_ID.test(replay)) && wanted && THREAD_ID_PATTERN.test(wanted);
+    if (needsAccount && !ready) return;
     booted.current = true;
     void (async () => {
       await Promise.resolve();
-      const params = new URLSearchParams(window.location.search);
-      const wanted = params.get("t");
-      const replay = params.get("replay");
       if (replay && REPLAY_ID.test(replay)) await openReplay(replay);
-      else if (wanted && THREAD_ID_PATTERN.test(wanted) && signedIn) await openThread(wanted);
+      else if (needsAccount && wanted && signedIn) await openThread(wanted);
       else startNew();
     })();
   }, [ready, signedIn, openThread, openReplay, startNew]);
@@ -140,17 +142,47 @@ export function Workspace({ fetchImpl }: { fetchImpl?: typeof fetch }) {
         if (!cancelled) setThreads(list);
       })
       .catch((err: unknown) => {
-        if (err instanceof AuthRequiredError) signOut();
+        if (!cancelled && !(err instanceof AuthRequiredError)) setThreads([]);
       });
     return () => {
       cancelled = true;
     };
-  }, [signedIn, signOut]);
+  }, [signedIn]);
 
-  const requestSignIn = useCallback((reason?: string) => {
-    setSignInReason(reason ?? null);
-    setSignInOpen(true);
-  }, []);
+  // Signing out (Clerk's user menu) leaves the account's conversation on screen otherwise.
+  const wasSignedIn = useRef(signedIn);
+  useEffect(() => {
+    if (wasSignedIn.current && !signedIn) {
+      setThreads([]);
+      startNew();
+    }
+    wasSignedIn.current = signedIn;
+  }, [signedIn, startNew]);
+
+  // Signed out, or the sign-in expired: Clerk's sign-in. Signed in without the code: the dialog.
+  // A question asked while signed out waits; once the account is known to lack the code, the
+  // dialog opens by itself, so one click on a question leads all the way to an answer.
+  const [codeAfterSignIn, setCodeAfterSignIn] = useState(false);
+  const requestSignIn = useCallback(
+    (reason?: string) => {
+      if (!signedIn || (reason && /sign in|expired/i.test(reason))) {
+        setCodeAfterSignIn(true);
+        openSignIn();
+        return;
+      }
+      setSignInReason(reason ?? null);
+      setSignInOpen(true);
+    },
+    [signedIn, openSignIn],
+  );
+  if (codeAfterSignIn && accessKnown) {
+    // Adjusting state during render (React's pattern for reacting to a changed value).
+    setCodeAfterSignIn(false);
+    if (!liveAccess) {
+      setSignInReason(null);
+      setSignInOpen(true);
+    }
+  }
 
   async function handleDelete(id: string) {
     if (!window.confirm("Delete this conversation and its files? This cannot be undone.")) return;
@@ -173,11 +205,9 @@ export function Workspace({ fetchImpl }: { fetchImpl?: typeof fetch }) {
       schema={schema}
       schemaError={schemaError}
       signedIn={signedIn}
-      onRequestSignIn={() => requestSignIn()}
-      onSignOut={() => {
-        signOut();
-        startNew();
-      }}
+      liveAccess={liveAccess}
+      onRequestSignIn={openSignIn}
+      onRequestAccess={() => requestSignIn()}
       onClose={onClose}
     />
   );
@@ -204,7 +234,7 @@ export function Workspace({ fetchImpl }: { fetchImpl?: typeof fetch }) {
             key={opened.id}
             threadId={opened.id}
             initialMessages={opened.messages}
-            signedIn={signedIn}
+            canRunLive={liveAccess}
             examples={examples}
             replay={opened.replay}
             replays={replays}
@@ -225,7 +255,7 @@ export function Workspace({ fetchImpl }: { fetchImpl?: typeof fetch }) {
       <AccessDialog
         open={signInOpen}
         onOpenChange={setSignInOpen}
-        onSubmit={signIn}
+        onSubmit={unlock}
         reason={signInReason}
       />
     </div>

@@ -10,6 +10,7 @@ import {
   createFakeApi,
   type FakeApiOptions,
 } from "@/test-utils/fake-api";
+import { clerk } from "@/test-utils/clerk-mock";
 import { Workspace } from "../workspace";
 
 vi.mock("@/components/ai-elements/code-block", () => ({
@@ -69,12 +70,58 @@ describe("Workspace", () => {
     expect(await screen.findByText(/could not load the schema/i)).toBeInTheDocument();
   });
 
-  it("asking while signed out opens the access dialog and sends nothing yet", async () => {
+  it("asking while signed out opens sign-in, then the access dialog, and sends nothing yet", async () => {
     const user = userEvent.setup();
     mount();
     await user.click(await screen.findByRole("button", { name: /why did revenue drop in march 2025/i }));
+    expect(clerk.openSignIn).toHaveBeenCalledTimes(1);
     expect(await screen.findByRole("dialog", { name: /enter the access code/i })).toBeInTheDocument();
     expect(chatRequests()).toHaveLength(0);
+  });
+
+  it("closing sign-in without signing in sends nothing and asks for no code", async () => {
+    const user = userEvent.setup();
+    clerk.autoSignIn = false;
+    mount();
+    await user.click(await screen.findByRole("button", { name: /why did revenue drop/i }));
+    expect(clerk.openSignIn).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("dialog", { name: /access code/i })).not.toBeInTheDocument();
+    expect(chatRequests()).toHaveLength(0);
+  });
+
+  it("an account that already has live access asks straight away", async () => {
+    const user = userEvent.setup();
+    clerk.signIn();
+    mount({ liveAccess: true });
+    await waitFor(() => expect(api.requests.some((r) => r.path === "/api/me")).toBe(true));
+    await user.click(await screen.findByRole("button", { name: /why did revenue drop/i }));
+    await waitFor(() => expect(chatRequests()).toHaveLength(1));
+    expect(chatRequests()[0].headers.get("authorization")).toBe(`Bearer ${TOKEN}`);
+    expect(clerk.openSignIn).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("the sidebar offers sign-in when signed out and the code when it is still needed", async () => {
+    const user = userEvent.setup();
+    mount();
+    const sidebar = within(await screen.findByRole("tabpanel"));
+    await user.click(sidebar.getByRole("button", { name: /sign in/i }));
+    expect(clerk.openSignIn).toHaveBeenCalledTimes(1);
+    await user.click(await screen.findByRole("button", { name: /enter access code/i }));
+    expect(await screen.findByRole("dialog", { name: /enter the access code/i })).toBeInTheDocument();
+  });
+
+  it("history belongs to the account: signing out clears it from the screen", async () => {
+    const user = userEvent.setup();
+    clerk.signIn();
+    mount({
+      liveAccess: true,
+      threads: [{ thread_id: "thread-0001", title: "Old question", created_at: "", updated_at: "" }],
+    });
+    expect(await screen.findByText("Old question")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /account/i }));
+    await waitFor(() => expect(screen.queryByText("Old question")).not.toBeInTheDocument());
+    expect(await screen.findByText(/to keep your questions/i)).toBeInTheDocument();
   });
 
   it("a wrong code shows a clear error and does not send the question", async () => {
@@ -129,13 +176,12 @@ describe("Workspace", () => {
     expect(await screen.findByRole("link", { name: /download chart\.png/i })).toBeInTheDocument();
   });
 
-  it("an expired session during a question asks for the code again instead of showing a dead error", async () => {
+  it("an expired sign-in during a question opens sign-in again instead of showing a dead error", async () => {
     const user = userEvent.setup();
-    mount({ chatStatus: { status: 401, detail: "Invalid or expired access token." } });
+    mount({ chatStatus: { status: 401, detail: "Your sign-in has expired. Sign in again." } });
     await user.click(await screen.findByRole("button", { name: /why did revenue drop/i }));
     await signIn(user);
-    const dialog = await screen.findByRole("dialog", { name: /enter the access code/i });
-    expect(dialog).toHaveTextContent(/your session ended/i);
+    await waitFor(() => expect(clerk.openSignIn).toHaveBeenCalledTimes(2)); // first sign-in, then again
   });
 
   it("other server errors are shown plainly with a way to dismiss them", async () => {
@@ -251,6 +297,14 @@ describe("Workspace", () => {
       expect(chatRequests()).toHaveLength(0);
     });
 
+    it("a recorded run opens even if Clerk never loads", async () => {
+      clerk.setLoaded(false);
+      window.history.replaceState(null, "", "/app?replay=cancelled-orders");
+      mount({ replays: true });
+      expect(await screen.findByTestId("replay-banner")).toHaveTextContent(/recorded run/i);
+      expect(await screen.findByTestId("answer")).toHaveTextContent(/cancelled/i);
+    });
+
     it("a recorded run's files load without a token", async () => {
       const user = userEvent.setup();
       mount({ replays: true });
@@ -280,13 +334,13 @@ describe("Workspace", () => {
     });
   });
 
-  it("the access token is kept for the tab (sessionStorage) but never in localStorage", async () => {
+  it("the session token is never written to browser storage (Clerk keeps the session)", async () => {
     const user = userEvent.setup();
     mount();
     await user.click(await screen.findByRole("button", { name: /why did revenue drop/i }));
     await signIn(user);
     await screen.findByTestId("answer");
-    expect(window.sessionStorage.getItem("sa.token")).toContain(TOKEN);
+    expect(JSON.stringify({ ...window.sessionStorage })).not.toContain(TOKEN);
     expect(JSON.stringify({ ...window.localStorage })).not.toContain(TOKEN);
   });
 });

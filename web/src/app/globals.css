@@ -1,3 +1,5 @@
+/* Clerk's components live in the `clerk` layer: above base, below our components/utilities. */
+@layer theme, base, clerk, components, utilities;
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";

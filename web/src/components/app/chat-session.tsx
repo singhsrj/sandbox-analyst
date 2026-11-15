@@ -29,7 +29,8 @@ import { AssistantTurn, organize } from "./assistant-turn";
 interface ChatSessionProps {
   threadId: string;
   initialMessages: AnalystMessage[];
-  signedIn: boolean;
+  /** Signed in and the access code entered: questions can run now. */
+  canRunLive: boolean;
   examples: string[];
   /** A recorded run: shown read-only, with no composer. */
   replay?: ReplaySummary;
@@ -44,7 +45,8 @@ interface ChatSessionProps {
   fetchImpl?: typeof fetch;
 }
 
-const AUTH_PROBLEM = /access token|expired|Missing access/i;
+// 401 (sign in again) or 403 (no access code yet): the workspace opens the right dialog.
+const AUTH_PROBLEM = /sign in|expired|access code/i;
 
 /** The browser's IANA timezone, so the agent can tell the user's local date and time. */
 function browserTimezone(): { timezone?: string } {
@@ -73,7 +75,7 @@ export function friendlyError(error: Error): { message: string; authProblem: boo
 export function ChatSession({
   threadId,
   initialMessages,
-  signedIn,
+  canRunLive,
   examples,
   replay,
   replays = [],
@@ -93,8 +95,8 @@ export function ChatSession({
       new DefaultChatTransport<AnalystMessage>({
         api: `${API_BASE_URL}/api/chat`,
         fetch: fetchImpl,
-        headers: () => {
-          const token = getToken();
+        headers: async () => {
+          const token = await getToken();
           return token ? { Authorization: `Bearer ${token}` } : ({} as Record<string, string>);
         },
         // The server keeps the conversation (checkpointer); sending only the newest message keeps
@@ -139,7 +141,7 @@ export function ChatSession({
 
   const approvals = useMemo(
     () => ({
-      enabled: !busy && signedIn,
+      enabled: !busy && canRunLive,
       decide: (approvalId: string, decision: ApprovalDecision) => {
         if (decision.editedQuery) book.recordEdit(approvalId, decision.editedQuery);
         clearError();
@@ -150,7 +152,7 @@ export function ChatSession({
         });
       },
     }),
-    [busy, signedIn, book, clearError, addToolApprovalResponse],
+    [busy, canRunLive, book, clearError, addToolApprovalResponse],
   );
   // A question typed before signing in waits here until the access code is accepted.
   const pendingQuestion = useRef<string | null>(null);
@@ -161,7 +163,7 @@ export function ChatSession({
   const send = useCallback(
     (text: string) => {
       if (busy || paused) return;
-      if (!signedIn) {
+      if (!canRunLive) {
         pendingQuestion.current = text;
         onNeedSignIn();
         return;
@@ -174,24 +176,24 @@ export function ChatSession({
       clearError();
       void sendMessage({ text });
     },
-    [busy, paused, signedIn, threadId, onNeedSignIn, clearError, sendMessage],
+    [busy, paused, canRunLive, threadId, onNeedSignIn, clearError, sendMessage],
   );
 
   // ...and is sent as soon as the access code is accepted.
   useEffect(() => {
-    if (signedIn && pendingQuestion.current) {
+    if (canRunLive && pendingQuestion.current) {
       const text = pendingQuestion.current;
       pendingQuestion.current = null;
       send(text);
     }
-  }, [signedIn, send]);
+  }, [canRunLive, send]);
 
   // An expired or rejected token: ask for the code again instead of showing a dead error.
   const handledError = useRef<Error | null>(null);
   useEffect(() => {
     if (error && failure?.authProblem && handledError.current !== error) {
       handledError.current = error;
-      onNeedSignIn("Your session ended. Enter the access code to continue.");
+      onNeedSignIn(failure.message);
     }
   }, [error, failure, onNeedSignIn]);
 
@@ -304,9 +306,9 @@ export function ChatSession({
                   placeholder={
                     paused
                       ? "Approve or reject the query above to continue"
-                      : signedIn
+                      : canRunLive
                         ? "Ask about revenue, customers, returns…"
-                        : "Ask a question (you will be asked for the access code)"
+                        : "Ask a question (you will be asked to sign in)"
                   }
                   disabled={paused}
                   maxLength={2000}

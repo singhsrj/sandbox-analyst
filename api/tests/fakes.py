@@ -12,7 +12,7 @@ from typing import Any
 from langchain_core.messages import AIMessage, ToolMessage, messages_from_dict
 from langgraph.types import Command, Interrupt
 
-from app.db.app_store import ThreadInfo, ThreadNotFound
+from app.db.app_store import ThreadInfo, ThreadNotFound, UserInfo
 from app.db.app_store import _title as make_title
 
 FIXTURE = Path(__file__).parent / "fixtures" / "stream_simple.jsonl"
@@ -148,6 +148,21 @@ class FakeStore:
     runs: list[dict[str, Any]] = field(default_factory=list)
     sandbox_ids: dict[str, str] = field(default_factory=dict)
     usage: list[tuple[str, int]] = field(default_factory=list)
+    # Clerk id -> [our user id, live access]. Our id equals the Clerk id here, to keep tests readable.
+    users: dict[str, list[Any]] = field(default_factory=dict)
+    suggestions: list[str] = field(default_factory=list)
+
+    async def user_for(self, provider: str, provider_sub: str) -> UserInfo:
+        row = self.users.setdefault(provider_sub, [provider_sub, False])
+        return UserInfo(user_id=row[0], live_access=row[1])
+
+    async def grant_live_access(self, user_id: str) -> None:
+        for row in self.users.values():
+            if row[0] == user_id:
+                row[1] = True
+
+    async def add_suggestion(self, body: str) -> None:
+        self.suggestions.append(body)
 
     async def ensure_thread(self, thread_id: str, owner_id: str, question: str) -> ThreadInfo:
         row = self.threads.setdefault(thread_id, {"owner": owner_id, "title": make_title(question)})
