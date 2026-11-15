@@ -40,3 +40,6 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 e2e/screenshots/
+
+# Clerk CLI / SDK local state (claim files, keys)
+.clerk/
