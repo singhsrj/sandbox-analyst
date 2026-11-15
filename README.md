@@ -11,9 +11,7 @@ and shows the query, code and assumptions behind every number.
 
 <br>
 
-<a href="https://www.loom.com/share/d2bec75cdcec486e9efdd723a3f459cd">
-  <img src="docs/assets/demo-thumbnail.gif" alt="4-minute demo of SandboxAnalyst (watch on Loom)" width="720">
-</a>
+
 
 <sub>▶ <a href="https://www.loom.com/share/d2bec75cdcec486e9efdd723a3f459cd">Watch the 4-minute demo</a>: a live question with its checkable report, human approval of SQL, "did you mean" instead of a guess, and the full trace.</sub>
 
