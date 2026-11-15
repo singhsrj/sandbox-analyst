@@ -62,7 +62,7 @@ Browser ──▶ Next.js on Vercel ──SSE──▶ FastAPI on EC2 (behind Ca
 
 | | Result |
 |---|---|
-| Golden eval, batch 1 | 17 / 20 correct (the full 80-question run is still pending) |
+| Golden eval suite | 80 questions across 13 categories, all reviewed; a scored run of the full set is pending |
 | Time per question | 26–105 s |
 | Tokens per question | ~49k–222k |
 | Prompt injection | Measured on a small set of runs; see [SECURITY.md](SECURITY.md) |

@@ -64,7 +64,7 @@ const FEATURES = [
 const STATS = [
   ["80", "golden questions across 13 categories, from simple sums to write attempts"],
   ["22", "of those answers double-checked by a second, independently written query"],
-  ["17 / 20", "correct on the first measured batch, scored by code, not by a model"],
+  ["80 / 80", "questions reviewed by a person, with every answer scored by code, not by a model"],
   ["0 of 6", "prompt-injection runs compromised (a small sample; see the security notes)"],
 ] as const;
 
@@ -258,7 +258,8 @@ function Reliability() {
         ))}
       </ol>
       <p className="mt-6 max-w-[70ch] text-sm leading-6 text-muted-foreground">
-        The full 80-question run is still to come, and the known limits, including one confidently
+        All 80 questions are written and reviewed; running the agent on the full set is next. The
+        known limits, including one confidently
         wrong answer, are written down rather than hidden.{" "}
         <a href={`${REPO}/tree/main/evals`} className="text-foreground underline underline-offset-2">
           Read the evaluation suite

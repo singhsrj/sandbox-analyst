@@ -114,7 +114,7 @@ Short ADRs. Each: context → decision → consequences. Newest at the bottom.
 - **Sandbox guards** (`app/sandbox/e2b_backend.py`), each added because a live probe showed the problem: a fork bomb made the sandbox stop answering for good -> per-user process limit on every command, plus a health check after a timeout that marks the sandbox unhealthy so it is replaced next turn; a command printed 3 MB -> output capped at 30,000 characters. Probe also found that raw TCP connects to public IPs are accepted by E2B's local egress proxy, but no HTTP/HTTPS/UDP traffic passes; tests assert on application traffic.
 
 ## ADR-024: Evals use one model (M6 scope)
-- **Context:** the brief asks for a multi-model comparison. A full run of the 80-question set uses about 80 x 150k = 12M tokens per model (estimate from M2-M5 runs, to be confirmed by the first eval batch), and the budget is the remaining AWS credit.
+- **Context:** the brief asks for a multi-model comparison. A full run of the 80-question set uses about 80 x 150k = 12M tokens per model (estimate from M2-M5 runs, to be confirmed by the first eval run), and the budget is the remaining AWS credit.
 - **Decision (user, 2026-11-06):** M6 evaluates only `openai.gpt-oss-120b`. No model comparison.
 - **Consequences:** results say how well this agent works with this model, not which model is best. The harness keeps a `--model` option, so a comparison can be run later. This is listed as a limitation in the README and the eval report.
 
