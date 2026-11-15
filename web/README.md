@@ -45,7 +45,9 @@ ACCESS_CODE=demo node e2e/smoke.mjs
 ## Security notes
 
 - Only `NEXT_PUBLIC_*` values reach the browser; there are no secrets in the frontend.
-- The access token lives in `sessionStorage` (per tab); the browser id in `localStorage`.
+- Sign-in is Clerk's (`@clerk/nextjs`). The API gets Clerk's short-lived session token from
+  `useAuth().getToken()` through `src/lib/auth.ts`; our code never writes it to browser storage.
+  Only `CLERK_SECRET_KEY` is secret, and it has no `NEXT_PUBLIC_` prefix, so it stays on the server.
 - Model output is rendered through the markdown renderer without raw HTML. The math and mermaid
   plugins are not installed (mermaid would render arbitrary model-written diagrams).
 - Sandbox output is shown in a plain `<pre>` with ANSI codes stripped. The ANSI-rendering

@@ -1,4 +1,4 @@
-import { clearSession, getToken } from "./auth";
+import { getToken, type Me } from "./auth";
 import { API_BASE_URL } from "./config";
 import type { ReplayDetail, ReplaySummary, SchemaTable, StoredRun, ThreadSummary } from "./types";
 
@@ -11,17 +11,17 @@ export class ApiError extends Error {
   }
 }
 
-/** The token is missing, expired or was rejected: the UI should ask for the access code again. */
+/** The token is missing, expired or was rejected: the UI should ask the person to sign in. */
 export class AuthRequiredError extends ApiError {
   constructor() {
-    super("Your session ended. Enter the access code to continue.", 401);
+    super("Sign in to continue.", 401);
   }
 }
 
 async function request(path: string, init: RequestInit = {}, auth = false): Promise<Response> {
   const headers = new Headers(init.headers);
   if (auth) {
-    const token = getToken();
+    const token = await getToken();
     if (!token) throw new AuthRequiredError();
     headers.set("Authorization", `Bearer ${token}`);
   }
@@ -31,10 +31,7 @@ async function request(path: string, init: RequestInit = {}, auth = false): Prom
   } catch {
     throw new ApiError("Can't reach the server. Check your connection and try again.", 0);
   }
-  if (response.status === 401 && auth) {
-    clearSession();
-    throw new AuthRequiredError();
-  }
+  if (response.status === 401 && auth) throw new AuthRequiredError();
   if (!response.ok) {
     let detail = `Request failed (${response.status}).`;
     try {
@@ -69,7 +66,20 @@ export async function getReplay(id: string): Promise<ReplayDetail> {
   return (await (await request(`/api/replays/${encodeURIComponent(id)}`)).json()) as ReplayDetail;
 }
 
+/** "What else should there be?" Anyone may send one; `website` is the hidden honeypot field. */
+export async function sendSuggestion(text: string, website = ""): Promise<void> {
+  await request("/api/suggestions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text, website }),
+  });
+}
+
 // --- authenticated --------------------------------------------------------------------
+export async function getMe(): Promise<Me> {
+  return (await (await request("/api/me", {}, true)).json()) as Me;
+}
+
 export async function listThreads(): Promise<ThreadSummary[]> {
   const body = (await (await request("/api/threads", {}, true)).json()) as {
     threads: ThreadSummary[];

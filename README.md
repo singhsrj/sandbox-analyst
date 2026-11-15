@@ -31,7 +31,7 @@ Text-to-SQL chatbots are easy to build and hard to trust. They **make up numbers
 
 ## Try it
 
-**[sandbox-analyst.vercel.app](https://sandbox-analyst.vercel.app)**: recorded, fact-checked runs are open to everyone. Asking your own questions needs an access code.
+**[sandbox-analyst.vercel.app](https://sandbox-analyst.vercel.app)**: recorded, fact-checked runs are open to everyone. Sign in to keep your history; asking your own questions also needs an access code.
 
 Example questions it is built for:
 
@@ -62,7 +62,7 @@ Browser ──▶ Next.js on Vercel ──SSE──▶ FastAPI on EC2 (behind Ca
 
 | | Result |
 |---|---|
-| Golden eval, batch 1 | 17 / 20 correct (the full 80-question run is still pending) |
+| Golden eval suite | 80 questions across 13 categories, all reviewed; a scored run of the full set is pending |
 | Time per question | 26–105 s |
 | Tokens per question | ~49k–222k |
 | Prompt injection | Measured on a small set of runs; see [SECURITY.md](SECURITY.md) |
@@ -96,17 +96,17 @@ cd web && npm install && npm run dev
 uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run pytest -q
 ```
 
-To log in to live runs, set `DEMO_ACCESS_CODE` and `SESSION_TOKEN_SECRET`. The full endpoint list is in [`api/app/api/routes.py`](api/app/api/routes.py). Deployment is covered in [docs/deploy.md](docs/deploy.md) and [infra/](infra/README.md).
+Sign-in uses [Clerk](https://clerk.com): set `CLERK_ISSUER` (API) and the two keys in `web/.env.local` (see `web/.env.example`), then `DEMO_ACCESS_CODE` for live runs. The full endpoint list is in [`api/app/api/routes.py`](api/app/api/routes.py). Deployment is covered in [docs/deploy.md](docs/deploy.md) and [infra/](infra/README.md).
 
 </details>
 
 ## Stack
 
-**Agent:** LangChain Deep Agents on LangGraph · **API:** FastAPI (SSE) · **Web:** Next.js, Vercel AI SDK, AI Elements · **Data:** Neon Postgres · **Sandbox:** E2B · **SQL safety:** sqlglot · **Observability:** Langfuse · **Infra:** Docker, Caddy, Terraform, AWS EC2 and Bedrock
+**Agent:** LangChain Deep Agents on LangGraph · **API:** FastAPI (SSE) · **Web:** Next.js, Vercel AI SDK, AI Elements · **Accounts:** Clerk · **Data:** Neon Postgres · **Sandbox:** E2B · **SQL safety:** sqlglot · **Observability:** Langfuse · **Infra:** Docker, Caddy, Terraform, AWS EC2 and Bedrock
 
 ## Learn more
 
 - [Security](SECURITY.md): threat model, defences, measured results and known limits
-- [Architecture decisions](docs/decisions.md): 27 short ADRs
+- [Architecture decisions](docs/decisions.md): 28 short ADRs
 - [Dataset](docs/dataset.md): schema and planted insights
 - [Deployment](docs/deploy.md)

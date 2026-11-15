@@ -50,7 +50,7 @@ export function AccessDialog({ open, onOpenChange, onSubmit, reason }: AccessDia
             <DialogTitle>Enter the access code</DialogTitle>
             <DialogDescription>
               {reason ??
-                "Live questions run real queries and cost money, so they need a code. Browsing the data and the examples does not."}
+                "Live questions run real queries and cost money, so each account enters a code once. Browsing the data and the recorded runs does not need it."}
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-2">

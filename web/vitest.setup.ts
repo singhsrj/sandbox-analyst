@@ -1,9 +1,16 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup } from "@testing-library/react";
-import { afterEach } from "vitest";
+import { afterEach, vi } from "vitest";
+import { setTokenProvider } from "./src/lib/auth";
+import { clerk } from "./src/test-utils/clerk-mock";
+
+// Clerk needs a browser session and network; every test gets the controllable stand-in.
+vi.mock("@clerk/nextjs", () => import("./src/test-utils/clerk-mock"));
 
 afterEach(() => {
   cleanup();
+  clerk.reset();
+  setTokenProvider(async () => null);
   window.localStorage.clear();
   window.sessionStorage.clear();
 });

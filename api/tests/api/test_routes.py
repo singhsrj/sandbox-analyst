@@ -11,22 +11,21 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.api.deps import Services
-from app.auth import issue_token
+from app.auth import ClerkVerifier
 from app.main import create_app
 from app.ratelimit import RateLimiter
 from app.service.chat import ChatService
 from tests.fakes import FakeAgent, FakeSandboxes, FakeStore, PausingAgent, recorded_events
-from tests.helpers import make_settings
+from tests.helpers import ISSUER, clerk_keys, clerk_token, make_settings
 
 CODE = "open-sesame"
-SECRET = "s" * 40
 THREAD = "thread-abc-123"
 
 
 def build(tmp_path: Path, **overrides: Any) -> tuple[TestClient, Services, FakeStore]:
     settings = make_settings(
         DEMO_ACCESS_CODE=CODE,
-        SESSION_TOKEN_SECRET=SECRET,
+        CLERK_ISSUER=ISSUER,
         ARTIFACTS_DIR=str(tmp_path),
         CORS_ALLOW_ORIGINS="http://localhost:3000",
         **overrides,
@@ -40,6 +39,7 @@ def build(tmp_path: Path, **overrides: Any) -> tuple[TestClient, Services, FakeS
         chat=ChatService(settings, store, sandboxes, None),  # type: ignore[arg-type]
         login_limiter=RateLimiter(5),
         chat_limiter=RateLimiter(10),
+        verifier=ClerkVerifier(settings, keys=clerk_keys()),
     )
     return TestClient(create_app(services)), services, store
 
@@ -65,9 +65,12 @@ def env(
         yield client, services, store
 
 
-def auth(services: Services, owner: str = "owner-aaaaaaaa") -> dict[str, str]:
-    token, _ = issue_token(services.settings, owner)
-    return {"Authorization": f"Bearer {token}"}
+def auth(services: Services, owner: str = "owner-aaaaaaaa", *, live: bool = True) -> dict[str, str]:
+    """Headers for a signed-in Clerk user (`owner` is both the Clerk id and, in FakeStore, our
+    user id) who has (live=True) or has not yet entered the access code."""
+    store: FakeStore = services.store  # type: ignore[assignment]
+    store.users.setdefault(owner, [owner, live])[1] = live
+    return {"Authorization": f"Bearer {clerk_token(owner)}"}
 
 
 def chat_body(
@@ -113,36 +116,71 @@ def test_cors_only_allows_the_configured_origin(
     assert "access-control-allow-origin" not in bad.headers
 
 
-# ----------------------------------------------------------------------------- session
-def test_correct_code_returns_a_working_token(env: tuple[TestClient, Services, FakeStore]) -> None:
-    client, _, _ = env
-    response = client.post("/api/session", json={"code": CODE, "client_id": "my-browser-id-1"})
-    assert response.status_code == 200
-    body = response.json()
-    assert body["client_id"] == "my-browser-id-1" and body["token"].count(".") == 1
-    listed = client.get("/api/threads", headers={"Authorization": f"Bearer {body['token']}"})
-    assert listed.status_code == 200
+# ----------------------------------------------------------------------------- accounts
+def test_me_creates_the_user_on_first_sign_in(env: tuple[TestClient, Services, FakeStore]) -> None:
+    client, _, store = env
+    headers = {"Authorization": f"Bearer {clerk_token('user_new1')}"}
+    body = client.get("/api/me", headers=headers).json()
+    assert body == {"user_id": "user_new1", "live_access": False, "live_runs_enabled": True}
+    assert store.users["user_new1"] == ["user_new1", False]
 
 
-def test_wrong_code_is_rejected_without_a_token(
+def test_signed_in_without_the_code_can_read_history_but_not_run(
     env: tuple[TestClient, Services, FakeStore],
 ) -> None:
-    client, _, _ = env
-    response = client.post("/api/session", json={"code": "nope"})
-    assert response.status_code == 401 and "token" not in response.json()
+    client, services, _ = env
+    headers = auth(services, "owner-nocode1", live=False)
+    assert client.get("/api/threads", headers=headers).status_code == 200
+    blocked = client.post("/api/chat", json=chat_body(), headers=headers)
+    assert blocked.status_code == 403 and "access code" in blocked.json()["detail"]
 
 
-def test_login_attempts_are_rate_limited(env: tuple[TestClient, Services, FakeStore]) -> None:
-    client, _, _ = env
-    codes = [client.post("/api/session", json={"code": "nope"}).status_code for _ in range(7)]
-    assert codes[:5] == [401] * 5 and codes[5:] == [429, 429]
-    # even the right code is refused while limited (no oracle for brute force)
-    blocked = client.post("/api/session", json={"code": CODE})
+def test_the_access_code_unlocks_live_runs_for_good(
+    env: tuple[TestClient, Services, FakeStore],
+) -> None:
+    client, services, store = env
+    headers = auth(services, "owner-unlock1", live=False)
+    assert client.get("/api/me", headers=headers).json()["live_access"] is False  # now cached
+    response = client.post("/api/access", json={"code": CODE}, headers=headers)
+    assert response.status_code == 200 and response.json() == {"live_access": True}
+    assert store.users["owner-unlock1"][1] is True
+    # the cached "no access" entry was dropped, so this works at once
+    assert client.post("/api/chat", json=chat_body(), headers=headers).status_code == 200
+    # entering it again is harmless
+    assert client.post("/api/access", json={"code": "x"}, headers=headers).status_code == 200
+
+
+def test_a_wrong_code_grants_nothing(env: tuple[TestClient, Services, FakeStore]) -> None:
+    client, services, store = env
+    headers = auth(services, "owner-wrong01", live=False)
+    response = client.post("/api/access", json={"code": "nope"}, headers=headers)
+    assert response.status_code == 401
+    assert store.users["owner-wrong01"][1] is False
+
+
+def test_access_code_attempts_are_limited_per_user_and_network(
+    env: tuple[TestClient, Services, FakeStore],
+) -> None:
+    client, services, _ = env
+    first = auth(services, "owner-guess01", live=False)
+    codes = [
+        client.post("/api/access", json={"code": "nope"}, headers=first).status_code
+        for _ in range(6)
+    ]
+    assert codes[:5] == [401] * 5 and codes[5] == 429
+    # a fresh account from the same network does not get a fresh guessing budget
+    second = auth(services, "owner-guess02", live=False)
+    blocked = client.post("/api/access", json={"code": CODE}, headers=second)
     assert blocked.status_code == 429 and "Retry-After" in blocked.headers
 
 
-def test_login_is_disabled_when_no_code_is_configured(tmp_path: Path) -> None:
-    settings = make_settings(ARTIFACTS_DIR=str(tmp_path))
+def test_access_needs_a_signed_in_user(env: tuple[TestClient, Services, FakeStore]) -> None:
+    client, _, _ = env
+    assert client.post("/api/access", json={"code": CODE}).status_code == 401
+
+
+def test_without_clerk_sign_in_is_off(tmp_path: Path) -> None:
+    settings = make_settings(ARTIFACTS_DIR=str(tmp_path), DEMO_ACCESS_CODE=CODE)
     store = FakeStore()
     services = Services(
         settings=settings,
@@ -151,9 +189,45 @@ def test_login_is_disabled_when_no_code_is_configured(tmp_path: Path) -> None:
         chat=ChatService(settings, store, FakeSandboxes(), None),  # type: ignore[arg-type]
     )
     with TestClient(create_app(services)) as client:
-        assert client.post("/api/session", json={"code": ""}).status_code in (422, 503)
-        assert client.post("/api/session", json={"code": "x"}).status_code == 503
-        assert client.get("/api/health").json()["live_runs_enabled"] is False
+        headers = {"Authorization": f"Bearer {clerk_token()}"}
+        assert client.get("/api/me", headers=headers).status_code == 503
+        health = client.get("/api/health").json()
+        assert health["sign_in_enabled"] is False and health["live_runs_enabled"] is False
+
+
+# ----------------------------------------------------------------------------- suggestions
+def test_anyone_can_leave_a_suggestion(env: tuple[TestClient, Services, FakeStore]) -> None:
+    client, _, store = env
+    response = client.post("/api/suggestions", json={"text": "  Compare   two date ranges  "})
+    assert response.status_code == 204
+    assert store.suggestions == ["Compare two date ranges"]
+
+
+def test_suggestions_are_validated(env: tuple[TestClient, Services, FakeStore]) -> None:
+    client, _, store = env
+    assert client.post("/api/suggestions", json={"text": "  a "}).status_code == 422
+    assert client.post("/api/suggestions", json={"text": "x" * 2001}).status_code == 422
+    assert not store.suggestions
+
+
+def test_the_honeypot_drops_bot_suggestions_quietly(
+    env: tuple[TestClient, Services, FakeStore],
+) -> None:
+    client, _, store = env
+    response = client.post(
+        "/api/suggestions", json={"text": "buy cheap things", "website": "http://spam"}
+    )
+    assert response.status_code == 204 and not store.suggestions
+
+
+def test_suggestions_are_limited_per_network(env: tuple[TestClient, Services, FakeStore]) -> None:
+    client, services, _ = env
+    services.suggestion_limiter = RateLimiter(2, 3600)
+    codes = [
+        client.post("/api/suggestions", json={"text": f"idea number {i}"}).status_code
+        for i in range(3)
+    ]
+    assert codes == [204, 204, 429]
 
 
 # ----------------------------------------------------------------------------- auth required
@@ -170,11 +244,11 @@ def test_login_is_disabled_when_no_code_is_configured(tmp_path: Path) -> None:
 def test_protected_endpoints_require_a_valid_token(
     env: tuple[TestClient, Services, FakeStore], method: str, path: str
 ) -> None:
-    client, services, _ = env
+    client, _, _ = env
     assert client.request(method, path).status_code == 401
     assert client.request(method, path, headers={"Authorization": "Bearer junk"}).status_code == 401
     assert client.request(method, path, headers={"Authorization": "Basic abc"}).status_code == 401
-    expired, _ = issue_token(services.settings, "owner-aaaaaaaa", now=0)
+    expired = clerk_token("owner-aaaaaaaa", now=0)
     assert (
         client.request(method, path, headers={"Authorization": f"Bearer {expired}"}).status_code
         == 401
@@ -371,13 +445,6 @@ def test_runs_are_limited_per_network_across_sessions(
         for i in range(3)
     ]
     assert statuses == [200, 200, 429]
-
-
-def test_new_sessions_are_limited_per_network(env: tuple[TestClient, Services, FakeStore]) -> None:
-    client, services, _ = env
-    services.session_ip_limiter = RateLimiter(2, 3600)
-    codes = [client.post("/api/session", json={"code": CODE}).status_code for _ in range(3)]
-    assert codes == [200, 200, 429]
 
 
 # ----------------------------------------------------------------------------- threads

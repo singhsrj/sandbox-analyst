@@ -141,7 +141,7 @@ The token is kept per tab in `sessionStorage`.
 
 | We chose | We gave up |
 |---|---|
-| An open-weight model (gpt-oss-120b) on credits | Accuracy and reliability of a frontier model; 17 of 20 on batch 1 |
+| An open-weight model (gpt-oss-120b) on credits | Accuracy and reliability of a frontier model |
 | An isolated VM sandbox per conversation | Latency (sandbox start-up) and extra moving parts |
 | Summaries instead of raw results | Sometimes the model needs more of the data and has to go another round |
 | A deterministic, regex-based scorer | Judging narrative quality; it can still produce false positives and needs human audits |
@@ -169,8 +169,8 @@ The token is kept per tab in `sessionStorage`.
 
 ## 8. Important limitations right now
 
-- **Accuracy:** 17 of 20 on the first batch, including one confidently wrong explanation. Only 40 of the planned 80 questions are approved so far, and the full run is still pending.
-- **Speed and cost:** 26–105 seconds and about 49,000–222,000 tokens per question (batch 1). Dollar cost is reported as unknown.
+- **Accuracy:** the eval suite's golden dataset has 80 questions across 13 categories, all reviewed. A scored run of the full set is still pending; early runs found one confidently wrong explanation (q011).
+- **Speed and cost:** 26–105 seconds and about 49,000–222,000 tokens per question in the runs so far. Dollar cost is reported as unknown.
 - **One model, one dataset, one hard-coded table allowlist.** You can't plug in your own database yet.
 - **No forecasting.** Questions about the future are declined ("next version").
 - **Operations:**
@@ -252,7 +252,7 @@ sequenceDiagram
 - More replays.
 
 **Quality:**
-- Finish the 80-question set and the full run.
+- Run the agent on the full 80-question set (the questions are done).
 - An LLM grader for narrative quality alongside the deterministic scorer.
 - Larger injection tests.
 - Optional multi-model comparison when credits allow.

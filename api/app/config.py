@@ -82,8 +82,12 @@ class Settings(BaseSettings):
 
     # --- auth / access code ---
     demo_access_code: SecretStr | None = None
-    session_token_secret: SecretStr | None = None
-    session_token_ttl_minutes: int = Field(default=120, ge=5)
+    # --- accounts (Clerk, ADR-028) ---
+    # The Clerk Frontend API URL, e.g. https://your-app.clerk.accounts.dev. Session tokens must be
+    # issued by it; its /.well-known/jwks.json holds the public keys. Unset = sign-in is off.
+    clerk_issuer: str | None = None
+    # Origins allowed to have requested a token (the `azp` claim). Empty = CORS_ALLOW_ORIGINS.
+    clerk_authorized_parties: CsvList = Field(default_factory=list)
 
     # --- limits & budgets ---
     max_agent_steps: int = Field(default=40, ge=1)  # max MODEL CALLS per request
@@ -98,15 +102,25 @@ class Settings(BaseSettings):
     max_tokens_per_day: int = Field(default=8_000_000, ge=1_000)
     rate_limit_per_minute: int = Field(default=10, ge=1)  # chat requests per session
     runs_per_ip_per_hour: int = Field(default=20, ge=1)
-    sessions_per_ip_per_hour: int = Field(default=10, ge=1)
-    login_attempts_per_minute: int = Field(default=5, ge=1)
+    suggestions_per_ip_per_hour: int = Field(default=5, ge=1)
+    login_attempts_per_minute: int = Field(default=5, ge=1)  # access-code attempts
     max_concurrent_runs: int = Field(default=3, ge=1)
     max_question_chars: int = Field(default=2_000, ge=10)
 
     # --- human approval (ADR-022) ---
     approval_mode: ApprovalMode = "normal"
 
-    @field_validator("cors_allow_origins", "fallback_models", "allowed_models", mode="before")
+    @property
+    def authorized_parties(self) -> list[str]:
+        return self.clerk_authorized_parties or self.cors_allow_origins
+
+    @field_validator(
+        "cors_allow_origins",
+        "fallback_models",
+        "allowed_models",
+        "clerk_authorized_parties",
+        mode="before",
+    )
     @classmethod
     def _split_csv(cls, value: object) -> object:
         if isinstance(value, str):

@@ -48,7 +48,8 @@ function realRunPublic(): Chunk[] {
       : c,
   );
 }
-export const TOKEN = "tok-abc.sig-xyz";
+export { CLERK_TOKEN as TOKEN } from "./clerk-mock";
+import { CLERK_TOKEN } from "./clerk-mock";
 
 export function sseBody(chunks: Chunk[]): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
@@ -79,10 +80,13 @@ export interface FakeApiOptions {
   schemaFails?: boolean;
   /** Recorded runs served by GET /api/replays (public). */
   replays?: boolean;
+  /** The signed-in account has already entered the access code. */
+  liveAccess?: boolean;
 }
 
 export function createFakeApi(options: FakeApiOptions = {}) {
   const requests: RecordedRequest[] = [];
+  let liveAccess = options.liveAccess ?? false;
   const json = (data: unknown, status = 200, headers: Record<string, string> = {}) =>
     new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json", ...headers } });
 
@@ -112,14 +116,20 @@ export function createFakeApi(options: FakeApiOptions = {}) {
     if (url.pathname === "/api/replays") return json({ replays: options.replays ? [REPLAY_SUMMARY] : [] });
     if (url.pathname === `/api/replays/${REPLAY_SUMMARY.id}` && options.replays)
       return json({ ...REPLAY_SUMMARY, runs: [replayRun] });
-    if (url.pathname === "/api/session" && method === "POST") {
-      const sent = (body as { code?: string }).code;
-      if (sent !== ACCESS_CODE) return json({ detail: "Invalid access code." }, 401);
-      return json({ token: TOKEN, expires_at: Math.floor(Date.now() / 1000) + 7200, client_id: "client-test-0001" });
+    if (url.pathname === "/api/suggestions" && method === "POST") return new Response(null, { status: 204 });
+    const signedIn = headers.get("authorization") === `Bearer ${CLERK_TOKEN}`;
+    const authed = ["/api/me", "/api/access", "/api/threads", "/api/chat"].includes(url.pathname);
+    if (authed && !signedIn) return json({ detail: "Sign in to continue." }, 401);
+    if (url.pathname === "/api/me")
+      return json({ user_id: "u_0123456789abcdef01234567", live_access: liveAccess, live_runs_enabled: true });
+    if (url.pathname === "/api/access" && method === "POST") {
+      if ((body as { code?: string }).code !== ACCESS_CODE) return json({ detail: "Invalid access code." }, 401);
+      liveAccess = true;
+      return json({ live_access: true });
     }
     if (url.pathname === "/api/threads" && method === "GET") return json({ threads: options.threads ?? [] });
     if (url.pathname === "/api/chat" && method === "POST") {
-      if (headers.get("authorization") !== `Bearer ${TOKEN}`) return json({ detail: "Missing access token." }, 401);
+      if (!liveAccess) return json({ detail: "Enter the access code to run live questions." }, 403);
       if (options.chatStatus) return json({ detail: options.chatStatus.detail }, options.chatStatus.status);
       const next = options.chatSequence?.shift();
       return new Response(sseBody(next ?? options.chat ?? realRun), {

@@ -1,48 +1,89 @@
-"""Access-code login and short-lived signed bearer tokens (ADR-006: no cross-site cookies).
+"""Accounts (ADR-028): Clerk session tokens, verified here; plus the demo access code.
 
-Flow: the visitor enters the demo access code -> POST /api/session -> we return a token that the
-browser sends as `Authorization: Bearer <token>`. The token is `base64url(payload).base64url(hmac)`
-with payload `{"sub": <client id>, "exp": <unix seconds>}`, signed with SESSION_TOKEN_SECRET.
-`sub` is a random id the browser keeps (it owns that visitor's threads); it is an identifier,
-not a credential: access always requires a valid, unexpired token.
+Flow: the browser signs in with Clerk and sends its short-lived session token (a JWT) as
+`Authorization: Bearer <token>` (ADR-006: no cross-site cookies). We verify it ourselves against
+the public keys at `<CLERK_ISSUER>/.well-known/jwks.json`: RS256 signature, `iss`, `exp`/`nbf`,
+and `azp` (the web origin that requested it; Clerk's recommended CSRF protection). The Clerk user
+id (`sub`) is mapped to our own user id in `app.users` (app/db/app_store.py), and that id owns the
+user's threads, so switching providers later does not orphan anyone's history.
+
+Signing in says WHO someone is. Running live questions costs model tokens, so it additionally
+needs the demo access code, entered once per account (`live_access`).
 """
 
 from __future__ import annotations
 
-import base64
-import hashlib
+import asyncio
 import hmac
-import json
 import re
-import time
-import uuid
 from dataclasses import dataclass
+from typing import Any, Protocol
+
+import jwt
 
 from app.config import Settings
 
-_CLIENT_ID = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
+LEEWAY_SECONDS = 5  # clock skew between Clerk and this server
+_CLERK_SUB = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 
 
 class AuthError(Exception):
-    """Missing, malformed, tampered or expired credentials."""
+    """Missing, malformed, tampered, expired or foreign credentials."""
+
+
+@dataclass(frozen=True)
+class Identity:
+    """A verified Clerk session: who signed in (not yet mapped to our user id)."""
+
+    provider_sub: str
+    expires_at: int
 
 
 @dataclass(frozen=True)
 class Session:
-    owner_id: str
+    owner_id: str  # our user id; owns threads, runs and the usage budget
     expires_at: int
+    live_access: bool  # has entered the access code
 
 
-def _b64(data: bytes) -> str:
-    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
+class SigningKeys(Protocol):
+    """Finds the public key for a token (PyJWKClient in production, a fixed key in tests)."""
+
+    def get_signing_key_from_jwt(self, token: str) -> Any: ...
 
 
-def _unb64(text: str) -> bytes:
-    return base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
+class ClerkVerifier:
+    def __init__(self, settings: Settings, keys: SigningKeys | None = None) -> None:
+        issuer = (settings.clerk_issuer or "").strip().rstrip("/")
+        if not issuer.startswith("https://"):
+            raise RuntimeError("CLERK_ISSUER must be the https:// Frontend API URL")
+        self.issuer = issuer
+        self.authorized_parties = frozenset(settings.authorized_parties)
+        # PyJWKClient caches the key set and refetches on an unknown key id (key rotation).
+        self._keys = keys or jwt.PyJWKClient(f"{issuer}/.well-known/jwks.json", lifespan=3600)
 
-
-def _sign(secret: str, body: str) -> str:
-    return _b64(hmac.new(secret.encode(), body.encode(), hashlib.sha256).digest())
+    async def verify(self, token: str) -> Identity:
+        try:
+            # The key lookup may fetch the JWKS over the network; keep it off the event loop.
+            signing_key = await asyncio.to_thread(self._keys.get_signing_key_from_jwt, token)
+            claims = jwt.decode(
+                token,
+                key=getattr(signing_key, "key", signing_key),
+                algorithms=["RS256"],
+                issuer=self.issuer,
+                leeway=LEEWAY_SECONDS,
+                options={"require": ["exp", "nbf", "iat", "iss", "sub"], "verify_aud": False},
+            )
+        except jwt.PyJWTError as exc:
+            raise AuthError(f"invalid token: {type(exc).__name__}") from exc
+        # Required, not optional: every browser session token carries `azp`, and a token minted
+        # for another origin must not work here.
+        if claims.get("azp") not in self.authorized_parties:
+            raise AuthError("token was issued to another origin")
+        sub = str(claims["sub"])
+        if not _CLERK_SUB.match(sub):
+            raise AuthError("malformed subject")
+        return Identity(provider_sub=sub, expires_at=int(claims["exp"]))
 
 
 def code_is_valid(settings: Settings, supplied: str) -> bool:
@@ -51,38 +92,3 @@ def code_is_valid(settings: Settings, supplied: str) -> bool:
     if configured is None or not configured.get_secret_value() or not supplied:
         return False
     return hmac.compare_digest(supplied.encode(), configured.get_secret_value().encode())
-
-
-def normalize_client_id(client_id: str | None) -> str:
-    if client_id and _CLIENT_ID.match(client_id):
-        return client_id
-    return uuid.uuid4().hex
-
-
-def issue_token(settings: Settings, owner_id: str, *, now: float | None = None) -> tuple[str, int]:
-    expires_at = int(
-        (now if now is not None else time.time()) + settings.session_token_ttl_minutes * 60
-    )
-    body = _b64(json.dumps({"sub": owner_id, "exp": expires_at}, separators=(",", ":")).encode())
-    return f"{body}.{_sign(settings.secret('session_token_secret'), body)}", expires_at
-
-
-def verify_token(settings: Settings, token: str | None, *, now: float | None = None) -> Session:
-    if not token:
-        raise AuthError("missing token")
-    try:
-        body, signature = token.split(".", 1)
-        expected = _sign(settings.secret("session_token_secret"), body)
-        if not hmac.compare_digest(signature, expected):
-            raise AuthError("bad signature")
-        payload = json.loads(_unb64(body))
-        owner, expires_at = str(payload["sub"]), int(payload["exp"])
-    except AuthError:
-        raise
-    except Exception as exc:  # malformed base64/json/fields: treat all as an invalid token
-        raise AuthError("malformed token") from exc
-    if (now if now is not None else time.time()) >= expires_at:
-        raise AuthError("expired token")
-    if not _CLIENT_ID.match(owner):
-        raise AuthError("malformed token")
-    return Session(owner_id=owner, expires_at=expires_at)

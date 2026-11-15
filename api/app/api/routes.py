@@ -3,15 +3,19 @@
 GET    /api/health
 GET    /api/examples                         anonymous: example question chips
 GET    /api/schema                           anonymous: schema browser data
-POST   /api/session                          access code -> bearer token
-POST   /api/chat                             SSE (AI SDK UI message stream)        [auth]
+POST   /api/suggestions                      anonymous: "what else should there be?"
+GET    /api/me                               the signed-in user, live access or not [auth]
+POST   /api/access                           access code -> live access, once       [auth]
+POST   /api/chat                             SSE (AI SDK UI message stream)        [live]
                                              new question, or `approvals` to resume
                                              a run paused for human approval
-GET    /api/threads                          this visitor's threads                [auth]
+GET    /api/threads                          this user's threads                   [auth]
 GET    /api/threads/{id}                     thread + run history (replayable)     [auth]
 DELETE /api/threads/{id}                                                           [auth]
 GET    /api/threads/{id}/artifacts/{name}    chart / CSV / report download         [auth]
 GET    /api/replays[/{slug}[/files/{name}]]  recorded, checked runs (replay mode)   public
+
+[auth] = a Clerk session token (Authorization: Bearer); [live] = [auth] + access code entered.
 """
 
 from __future__ import annotations
@@ -27,9 +31,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app import __version__
 from app.agent.approvals import MAX_REASON_CHARS, ApprovalAnswer, ApprovalMismatch
-from app.api.deps import ServicesDep, SessionDep, client_ip
+from app.api.deps import LiveSessionDep, ServicesDep, SessionDep, client_ip
 from app.artifacts import artifact_path
-from app.auth import code_is_valid, issue_token, normalize_client_id
+from app.auth import code_is_valid
 from app.db.analyst import fetch_catalog
 from app.db.app_store import ThreadNotFound
 from app.ratelimit import RateLimiter
@@ -57,9 +61,14 @@ _THREAD_ID_PATTERN = r"^[A-Za-z0-9_-]{8,64}$"
 
 
 # --------------------------------------------------------------------------- models
-class SessionRequest(BaseModel):
+class AccessRequest(BaseModel):
     code: str = Field(min_length=1, max_length=200)
-    client_id: str | None = Field(default=None, max_length=64)
+
+
+class SuggestionRequest(BaseModel):
+    text: str = Field(max_length=2000)
+    # Honeypot: hidden from people, filled in by naive bots. A filled one is accepted and dropped.
+    website: str | None = Field(default=None, max_length=200)
 
 
 class ChatPart(BaseModel):
@@ -118,7 +127,9 @@ async def health(request: Request) -> dict[str, Any]:
     if services is not None:
         body.update(
             env=services.settings.app_env,
-            live_runs_enabled=services.settings.demo_access_code is not None,
+            sign_in_enabled=services.verifier is not None,
+            live_runs_enabled=services.verifier is not None
+            and services.settings.demo_access_code is not None,
             active_runs=services.chat.active_runs,
         )
     return body
@@ -175,25 +186,47 @@ async def schema(services: ServicesDep) -> dict[str, Any]:
     return value
 
 
-@router.post("/session")
-async def create_session(
-    body: SessionRequest, request: Request, services: ServicesDep
-) -> dict[str, Any]:
-    settings = services.settings
-    ip = client_ip(request)
-    _limit(services.login_limiter, ip, "Too many attempts.")
-    if settings.demo_access_code is None or settings.session_token_secret is None:
-        raise HTTPException(status_code=503, detail="Live runs are not enabled on this server.")
-    if not code_is_valid(settings, body.code):
-        raise HTTPException(status_code=401, detail="Invalid access code.")
-    # Every session is a fresh daily budget, so new sessions per IP are capped too.
-    _limit(services.session_ip_limiter, ip, "Too many new sessions from this network.")
-    owner = normalize_client_id(body.client_id)
-    token, expires_at = issue_token(settings, owner)
-    return {"token": token, "expires_at": expires_at, "client_id": owner}
+@router.post("/suggestions", status_code=204)
+async def suggest(body: SuggestionRequest, request: Request, services: ServicesDep) -> None:
+    """Anyone may suggest a feature. Stored without IP, email or user id; read in the database."""
+    _limit(services.suggestion_limiter, client_ip(request), "Thanks! That's enough for now.")
+    if body.website:
+        return  # a bot filled the hidden field: pretend it worked
+    text = " ".join(body.text.split())
+    if len(text) < 3:
+        raise HTTPException(status_code=422, detail="Write a few words first.")
+    await services.store.add_suggestion(text)
 
 
 # --------------------------------------------------------------------------- authenticated
+@router.get("/me")
+async def me(session: SessionDep, services: ServicesDep) -> dict[str, Any]:
+    return {
+        "user_id": session.owner_id,
+        "live_access": session.live_access,
+        "live_runs_enabled": services.settings.demo_access_code is not None,
+    }
+
+
+@router.post("/access")
+async def grant_access(
+    body: AccessRequest, request: Request, session: SessionDep, services: ServicesDep
+) -> dict[str, Any]:
+    """Enter the demo access code once; the account keeps live access from then on."""
+    if session.live_access:
+        return {"live_access": True}
+    if services.settings.demo_access_code is None:
+        raise HTTPException(status_code=503, detail="Live runs are not enabled on this server.")
+    # Per user AND per network: neither a new account nor a new IP resets the guessing budget.
+    for key in (session.owner_id, f"ip:{client_ip(request)}"):
+        _limit(services.login_limiter, key, "Too many attempts.")
+    if not code_is_valid(services.settings, body.code):
+        raise HTTPException(status_code=401, detail="Invalid access code.")
+    await services.store.grant_live_access(session.owner_id)
+    services.users.forget_owner(session.owner_id)
+    return {"live_access": True}
+
+
 def _limit(limiter: RateLimiter, key: str, detail: str) -> None:
     if not limiter.allow(key):
         raise HTTPException(
@@ -203,7 +236,7 @@ def _limit(limiter: RateLimiter, key: str, detail: str) -> None:
 
 @router.post("/chat")
 async def chat(
-    body: ChatRequest, request: Request, session: SessionDep, services: ServicesDep
+    body: ChatRequest, request: Request, session: LiveSessionDep, services: ServicesDep
 ) -> StreamingResponse:
     """A new question, or (with `approvals`) the reviewer's answers to a paused run."""
     settings = services.settings

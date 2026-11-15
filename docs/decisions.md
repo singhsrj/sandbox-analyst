@@ -25,7 +25,7 @@ Short ADRs. Each: context → decision → consequences. Newest at the bottom.
 ## ADR-005: Frontend on Vercel Hobby — provisional
 - **Decision:** Vercel Hobby (personal, non-commercial), Netlify as fallback. The browser talks to the AWS API directly for SSE (no serverless proxy in the stream path).
 
-## ADR-006: Access code → bearer token, not cookies
+## ADR-006: Access code → bearer token, not cookies (token part superseded by ADR-028)
 - **Context:** No custom domain, so frontend (`*.vercel.app`) and API are different sites; third-party cookies are blocked by Safari and increasingly by others.
 - **Decision:** Live runs require a demo access code. `POST /api/session` exchanges it for a short-lived signed token, sent as `Authorization: Bearer …`. CORS without credentials. Anonymous visitors can browse the UI and recorded runs.
 - **Consequences:** Token is readable by page JS (XSS matters → strict CSP, no `dangerouslySetInnerHTML` on model output); short TTL limits damage. Changes the brief's "httpOnly cookie" design.
@@ -114,7 +114,7 @@ Short ADRs. Each: context → decision → consequences. Newest at the bottom.
 - **Sandbox guards** (`app/sandbox/e2b_backend.py`), each added because a live probe showed the problem: a fork bomb made the sandbox stop answering for good -> per-user process limit on every command, plus a health check after a timeout that marks the sandbox unhealthy so it is replaced next turn; a command printed 3 MB -> output capped at 30,000 characters. Probe also found that raw TCP connects to public IPs are accepted by E2B's local egress proxy, but no HTTP/HTTPS/UDP traffic passes; tests assert on application traffic.
 
 ## ADR-024: Evals use one model (M6 scope)
-- **Context:** the brief asks for a multi-model comparison. A full run of the 80-question set uses about 80 x 150k = 12M tokens per model (estimate from M2-M5 runs, to be confirmed by the first eval batch), and the budget is the remaining AWS credit.
+- **Context:** the brief asks for a multi-model comparison. A full run of the 80-question set uses about 80 x 150k = 12M tokens per model (estimate from M2-M5 runs, to be confirmed by the first eval run), and the budget is the remaining AWS credit.
 - **Decision (user, 2026-11-06):** M6 evaluates only `openai.gpt-oss-120b`. No model comparison.
 - **Consequences:** results say how well this agent works with this model, not which model is best. The harness keeps a `--model` option, so a comparison can be run later. This is listed as a limitation in the README and the eval report.
 
@@ -136,3 +136,12 @@ Short ADRs. Each: context → decision → consequences. Newest at the bottom.
 - **No secrets in Terraform:** not as variables, not in user data, no access key resources (the key is created in the console so its secret is never in state). `deploy/.env` is copied over SSH.
 - **Server hardening:** IMDSv2 required, encrypted disk, SSH only from the operator's IP, unattended security upgrades, the AMI pinned after launch (`ignore_changes`) so a new Ubuntu build cannot replace the running server.
 - Provider pinned to an exact version at least two weeks old (6.69.1); the lock file carries Windows, Linux and macOS checksums so CloudShell and the operator machine resolve the same provider.
+
+## ADR-028: Accounts with Clerk; access code once per account (supersedes the token part of ADR-006)
+- **Context:** History was tied to a random browser id in localStorage: lost on another device or after clearing site data, and every new session was a fresh budget owner.
+- **Decision:** Sign-in with Clerk (`@clerk/nextjs`, modal sign-in, no pages of our own). The browser still sends a bearer token (ADR-006: frontend and API are different sites), now Clerk's short-lived session token from `getToken()`. The API verifies it itself with PyJWT against `<CLERK_ISSUER>/.well-known/jwks.json`: RS256 only, issuer, `exp`/`nbf`, and `azp` required to be one of our origins (`CLERK_AUTHORIZED_PARTIES`, default `CORS_ALLOW_ORIGINS`). No Clerk SDK and no Clerk secret on the API.
+- **Our own user id:** `app.users` maps (provider, Clerk id) to `u_<24 hex>`, and that id is the `owner_id` of threads, runs and the usage ledger. Changing provider later re-maps identities without touching history. A one-minute in-process cache avoids a database write per request; granting access drops the entry.
+- **Who can spend:** signing in gives history and recorded runs. Live questions additionally need `DEMO_ACCESS_CODE`, entered once per account (`POST /api/access`, stored as `live_access_at`). Guesses are limited per account and per IP. Budgets are now per account, so the "new sessions per IP" limit is gone.
+- **Routes:** `/` is a public landing page, the workspace moved to `/app`; `src/proxy.ts` (Clerk's handler) redirects old `/?t=` and `/?replay=` links. A recorded run or a new question opens without waiting for Clerk, so the public parts work even when Clerk is blocked.
+- **Suggestions:** `POST /api/suggestions`, anonymous, stored in `app.suggestions` without IP, email or user id; the app role may only insert. Per-IP limit, length cap, honeypot.
+- **Not done:** claiming the old anonymous threads (the browser id was not a credential, so moving them safely needs the old token, which no longer exists); a Clerk webhook for account deletion.
