@@ -46,8 +46,10 @@ def fmt(value: Any) -> str:
 def run(sql: str) -> tuple[list[str], list[tuple[Any, ...]]]:
     validated = validate_select(sql)
     url = get_settings().secret("analyst_database_url")
-    with psycopg.connect(url, autocommit=True) as conn:
-        conn.execute("SET statement_timeout = '30s'")
+    # SET LOCAL, inside a transaction: a plain SET outlives this connection in Neon's pooler and
+    # changes the timeout of whatever connection reuses that server session next (ADR-009).
+    with psycopg.connect(url, autocommit=True) as conn, conn.transaction():
+        conn.execute("SET LOCAL statement_timeout = '30s'")
         cur = conn.execute(validated.sql)
         columns = [d.name for d in cur.description or []]
         return columns, cur.fetchall()

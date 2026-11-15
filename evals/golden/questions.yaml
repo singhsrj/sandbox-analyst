@@ -20,6 +20,8 @@
 #   cross_check_sql a second, independently written query with the same columns; golden_check fails
 #                   if it disagrees with reference_sql (protects against a wrong reference query)
 #   must_mention    words or facts the answer has to contain (case-insensitive, any one of each list)
+#   must_not_say    regexes (case-insensitive) for claims the reference data contradicts, such as a
+#                   wrong direction of change; any match fails the answer
 #   notes           definitions and why the question is here
 #   review          pending | approved | changed | dropped   (+ reviewer comment)
 
@@ -175,6 +177,12 @@ questions:
       GROUP BY 1 ORDER BY 1
     expected: {kind: values, values: {South Feb: 154497.61, South Mar: 26790.45, total Mar: 441892.21, total Feb: 506271.04}, tolerance: 0.02, unit: USD}
     must_mention: [[South], [early March, March 3, 3 March, "2025-03-03", first week of March, start of March]]
+    must_not_say:
+      # North, East and West GREW from Feb to Mar; only South (-83%) and Central (-10%) fell.
+      # A live run (2026-11-06) said "all regions dropped, North the most". (Kept out of `notes`,
+      # which the narrative judge reads.)
+      - '\b(?:all|every|each)\b(?: (?:five|5|of the))? regions?\b[^.\n]{0,40}\b(?:lower|less|reduc|declin|drop|fell|fall|down|decreas)'
+      - '\b(?:largest|biggest|steepest|sharpest)\b[^.\n]{0,40}\b(?:drop|declin|decreas|fall)[^.\n]{0,30}\bNorth\b'
     notes: |
       Planted insight 1: South orders almost stopped 2025-03-03 to 2025-03-29. Full marks need the region
       AND the window (start ~Mar 3, recovery ~Mar 30). Inventing a cause (e.g. "a marketing campaign
