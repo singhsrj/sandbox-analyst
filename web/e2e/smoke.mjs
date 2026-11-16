@@ -39,12 +39,11 @@ try {
   await page.getByRole("list", { name: /example questions/i }).getByRole("button").first().waitFor();
   await shot("01-empty-light");
 
-  // schema browser works without signing in
-  await page.getByRole("tab", { name: /the data/i }).click();
-  await page.getByText("orders", { exact: true }).first().waitFor({ timeout: 15_000 });
-  await page.locator("summary", { hasText: "orders" }).first().click();
-  await shot("02-schema");
-  await page.getByRole("tab", { name: /history/i }).click();
+  // the data profile opens beside the chat without signing in (e2e/profile.mjs checks it in depth)
+  await page.getByRole("button", { name: /data profile/i }).click();
+  await page.getByRole("region", { name: /data profile/i }).getByText(/written by/i).waitFor({ timeout: 15_000 });
+  await shot("02-data-profile");
+  await page.getByRole("button", { name: /close data profile/i }).click();
 
   // ask while signed out -> access dialog
   await page.getByRole("textbox", { name: /your question/i }).fill(QUESTION);

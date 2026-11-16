@@ -1,6 +1,6 @@
 import { getToken, type Me } from "./auth";
 import { API_BASE_URL } from "./config";
-import type { ReplayDetail, ReplaySummary, SchemaTable, StoredRun, ThreadSummary } from "./types";
+import type { DataProfile, ReplayDetail, ReplaySummary, StoredRun, ThreadSummary } from "./types";
 
 export class ApiError extends Error {
   constructor(
@@ -51,9 +51,9 @@ export async function getExamples(): Promise<string[]> {
   return body.questions;
 }
 
-export async function getSchema(): Promise<SchemaTable[]> {
-  const body = (await (await request("/api/schema")).json()) as { tables: SchemaTable[] };
-  return body.tables;
+/** The statistical profile of a dataset (tables, distributions, outliers, ER diagram). Public. */
+export async function getProfile(dataset: string): Promise<DataProfile> {
+  return (await (await request(`/api/profiles/${encodeURIComponent(dataset)}`)).json()) as DataProfile;
 }
 
 /** Recorded, checked runs anyone can watch (replay mode). */

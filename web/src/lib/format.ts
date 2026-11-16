@@ -49,3 +49,13 @@ export function replaceSandboxImages(markdown: string): string {
     return `*(${label}: see ${name} in Files)*`;
   });
 }
+
+/** Short, readable statistics: 1234.5 → "1,235", 0.01234 → "0.0123", 2500000 → "2.5M". */
+export function formatStat(n: number | null | undefined): string {
+  if (n === null || n === undefined || !Number.isFinite(n)) return "–";
+  const abs = Math.abs(n);
+  if (abs >= 100_000) return new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 }).format(n);
+  if (abs >= 100) return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(n);
+  if (abs >= 1) return new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(n);
+  return new Intl.NumberFormat("en-US", { maximumSignificantDigits: 3 }).format(n);
+}

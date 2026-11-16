@@ -534,3 +534,29 @@ def test_artifacts_of_other_visitors_are_not_readable(
         client.get(f"/api/threads/{THREAD}/artifacts/chart.png", headers=intruder).status_code
         == 404
     )
+
+
+def test_sample_profile_is_public_and_cacheable(
+    env: tuple[TestClient, Services, FakeStore],
+) -> None:
+    client, _, _ = env
+    response = client.get("/api/profiles/sample")
+    assert response.status_code == 200
+    assert "max-age" in response.headers["cache-control"]
+    profile = response.json()
+    assert profile["version"] == 1 and profile["dataset"]["id"] == "sample"
+    assert {t["name"] for t in profile["tables"]} >= {"orders", "order_items", "customers"}
+    assert profile["relationships"] and profile["feature_importance"]["target"] == "is_returned"
+    # Personal data never leaves as a value: no examples or top values for PII columns.
+    pii = [c for t in profile["tables"] for c in t["columns"] if c["kind"] == "pii"]
+    assert {c["name"] for c in pii} >= {"email", "full_name"}
+    assert all(c["example"] is None and "top_values" not in c for c in pii)
+    assert "@" not in response.text
+
+
+@pytest.mark.parametrize("dataset", ["nope", "..%2Fsample", "sample.json", "SAMPLE"])
+def test_unknown_profiles_are_404(
+    env: tuple[TestClient, Services, FakeStore], dataset: str
+) -> None:
+    client, _, _ = env
+    assert client.get(f"/api/profiles/{dataset}").status_code == 404

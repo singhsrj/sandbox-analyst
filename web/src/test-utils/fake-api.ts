@@ -3,6 +3,7 @@
  * and the SSE body is the REAL recorded agent run (see scripts/dump_chunks.py).
  */
 import fixture from "../../test-fixtures/chunks.json";
+import type { DataProfile } from "@/lib/types";
 
 type Chunk = Record<string, unknown>;
 const runs = fixture as unknown as Record<string, Chunk[]>;
@@ -69,6 +70,51 @@ export interface RecordedRequest {
   body: unknown;
 }
 
+/** A small, valid data profile: two tables, one join, every column kind the panel draws. */
+export const SAMPLE_PROFILE: DataProfile = {
+  version: 1,
+  dataset: { id: "sample", name: "Sample shop data", source: "postgres", generated_at: "2026-11-16T00:00:00+00:00", tables: 2, rows: 50050, columns: 6 },
+  summary: { text: "Orders from a synthetic shop, 2024 to 2025.", model: "openai.gpt-oss-120b", ai_generated: true },
+  tables: [
+    {
+      name: "customers",
+      description: "One row per customer.",
+      rows: 50,
+      correlations: null,
+      columns: [
+        { name: "customer_id", type: "integer", kind: "id", note: "", missing: 0, missing_pct: 0, distinct: 50, example: "1" },
+        { name: "email", type: "text", kind: "pii", note: "", missing: 0, missing_pct: 0, distinct: 50, example: null },
+      ],
+    },
+    {
+      name: "orders",
+      description: "One row per order.",
+      rows: 50000,
+      columns: [
+        { name: "order_id", type: "integer", kind: "id", note: "", missing: 0, missing_pct: 0, distinct: 50000, example: "1" },
+        { name: "customer_id", type: "integer", kind: "id", note: "", missing: 0, missing_pct: 0, distinct: 50, example: "7" },
+        {
+          name: "status", type: "text", kind: "categorical", note: "delivered | cancelled", missing: 0, missing_pct: 0, distinct: 2, example: "delivered",
+          top_values: [{ value: "delivered", count: 48000, pct: 96 }, { value: "cancelled", count: 2000, pct: 4 }],
+        },
+        {
+          name: "total_amount", type: "numeric(12,2)", kind: "numeric", note: "", missing: 0, missing_pct: 0, distinct: 4000, example: "12.5",
+          stats: { min: 4, p25: 60, median: 170, mean: 290, p75: 390, max: 3900, std: 350, skew: 2.6 },
+          histogram: [{ start: 4, end: 200, count: 30000 }, { start: 200, end: 3900, count: 20000 }],
+          outliers: { method: "iqr", lower: -430, upper: 886, count: 2985, pct: 5.97, examples: [3900, 3600] },
+        },
+      ],
+      correlations: { method: "spearman", columns: ["total_amount", "quantity"], matrix: [[1, 0.62], [0.62, 1]] },
+    },
+  ],
+  relationships: [{ from_table: "orders", from_column: "customer_id", to_table: "customers", to_column: "customer_id", kind: "foreign_key" }],
+  feature_importance: {
+    table: "order lines", target: "is_returned", task: "classification", method: "mutual_information",
+    description: "What relates to returns.", rows_used: 50000,
+    scores: [{ feature: "category", score: 0.043 }, { feature: "unit_price", score: 0.022 }],
+  },
+};
+
 export interface FakeApiOptions {
   /** Chunks streamed for POST /api/chat. */
   chat?: Chunk[];
@@ -77,7 +123,8 @@ export interface FakeApiOptions {
   /** Respond to POST /api/chat with this status instead of streaming. */
   chatStatus?: { status: number; detail: string };
   threads?: unknown[];
-  schemaFails?: boolean;
+  /** GET /api/profiles/sample fails with a 500. */
+  profileFails?: boolean;
   /** Recorded runs served by GET /api/replays (public). */
   replays?: boolean;
   /** The signed-in account has already entered the access code. */
@@ -100,18 +147,9 @@ export function createFakeApi(options: FakeApiOptions = {}) {
 
     if (url.pathname === "/api/examples")
       return json({ questions: ["Why did revenue drop in March 2025?", "Which category returns most?"] });
-    if (url.pathname === "/api/schema") {
-      if (options.schemaFails) return json({ detail: "down" }, 500);
-      return json({
-        tables: [
-          {
-            name: "orders",
-            approx_rows: 50021,
-            description: "One row per order.",
-            columns: [{ name: "status", type: "text", nullable: false, note: "delivered | cancelled" }],
-          },
-        ],
-      });
+    if (url.pathname === "/api/profiles/sample") {
+      if (options.profileFails) return json({ detail: "down" }, 500);
+      return json(SAMPLE_PROFILE);
     }
     if (url.pathname === "/api/replays") return json({ replays: options.replays ? [REPLAY_SUMMARY] : [] });
     if (url.pathname === `/api/replays/${REPLAY_SUMMARY.id}` && options.replays)

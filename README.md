@@ -27,6 +27,7 @@ Text-to-SQL chatbots are easy to build and hard to trust. They **make up numbers
 - **The database is safe.** SQL goes through two independent defences: an AST validator (one `SELECT`, allowlisted tables) and a Postgres role that can only read. Either one alone is enough to stop a write.
 - **Model-written code is treated as hostile.** It runs in a throwaway E2B VM with no network access and no secrets. Only the query result is sent into the sandbox, never the database credentials.
 - **Risky queries wait for a human.** Large or unfiltered queries pause so a person can approve, edit or reject them. The pause survives a page reload and a server restart.
+- **You can see the data before you ask.** A data profile opens beside the chat: an AI-written summary, every table and column, an ER diagram, distributions, outliers, correlations and feature importance. All of it is computed by code; personal-data columns show counts only.
 - **Quality is measured.** A golden question set with answers defined by reference SQL, a deterministic scorer, and a prompt-injection eval, all in [`evals/`](evals/).
 
 ## Try it
@@ -96,7 +97,7 @@ cd web && npm install && npm run dev
 uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run pytest -q
 ```
 
-Sign-in uses [Clerk](https://clerk.com): set `CLERK_ISSUER` (API) and the two keys in `web/.env.local` (see `web/.env.example`), then `DEMO_ACCESS_CODE` for live runs. The full endpoint list is in [`api/app/api/routes.py`](api/app/api/routes.py). Deployment is covered in [docs/deploy.md](docs/deploy.md) and [infra/](infra/README.md).
+Sign-in uses [Clerk](https://clerk.com): set `CLERK_ISSUER` (API) and the two keys in `web/.env.local` (see `web/.env.example`), then `DEMO_ACCESS_CODE` for live runs. The sample data's profile is a committed file; rebuild it after reseeding with `PYTHONPATH=api uv run python scripts/build_sample_profile.py`. The full endpoint list is in [`api/app/api/routes.py`](api/app/api/routes.py). Deployment is covered in [docs/deploy.md](docs/deploy.md) and [infra/](infra/README.md).
 
 </details>
 

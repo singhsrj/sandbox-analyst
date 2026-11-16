@@ -55,19 +55,41 @@ describe("Workspace", () => {
     expect(api.requests.some((r) => r.path === "/api/chat")).toBe(false);
   });
 
-  it("lets anyone browse the schema in the sidebar", async () => {
+  it("opens the data profile beside the chat and closes it with the cross", async () => {
     const user = userEvent.setup();
     mount();
-    await user.click(await screen.findByRole("tab", { name: /the data/i }));
-    expect(await screen.findByText("orders")).toBeInTheDocument();
-    expect(screen.getByText(/50,021 rows/)).toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: /data profile/i }));
+    const panel = await screen.findByRole("region", { name: /data profile/i });
+    const inPanel = within(panel);
+    expect(await inPanel.findByText(/orders from a synthetic shop/i)).toBeInTheDocument();
+    expect(inPanel.getByText(/written by openai\.gpt-oss-120b/i)).toBeInTheDocument();
+    expect(inPanel.getByRole("img", { name: /entity relationship diagram: 2 tables, 1 joins/i })).toBeInTheDocument();
+    // The chat stays usable next to it.
+    expect(screen.getByRole("heading", { name: /ask a question about the shop/i })).toBeInTheDocument();
+    await user.click(inPanel.getByRole("button", { name: /close data profile/i }));
+    expect(screen.queryByRole("region", { name: /data profile/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /data profile/i })).toHaveAttribute("aria-pressed", "false");
   });
 
-  it("says so when the schema cannot be loaded", async () => {
+  it("shows one table's details at a time and never shows personal data", async () => {
     const user = userEvent.setup();
-    mount({ schemaFails: true });
-    await user.click(await screen.findByRole("tab", { name: /the data/i }));
-    expect(await screen.findByText(/could not load the schema/i)).toBeInTheDocument();
+    mount();
+    await user.click(await screen.findByRole("button", { name: /data profile/i }));
+    const panel = within(await screen.findByRole("region", { name: /data profile/i }));
+    // Starts on the biggest table.
+    expect(await panel.findByRole("table", { name: /columns of orders/i })).toBeInTheDocument();
+    expect(panel.getByRole("table", { name: /outliers per numeric column of orders/i })).toHaveTextContent("2,985 (5.97%)");
+    await user.click(panel.getByRole("button", { name: "customers" }));
+    const columns = panel.getByRole("table", { name: /columns of customers/i });
+    expect(within(columns).getByText("hidden")).toBeInTheDocument();
+    expect(panel.getAllByText(/personal data: values are hidden/i)).toHaveLength(1);
+  });
+
+  it("says so when the data profile cannot be loaded", async () => {
+    const user = userEvent.setup();
+    mount({ profileFails: true });
+    await user.click(await screen.findByRole("button", { name: /data profile/i }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/down|could not/i);
   });
 
   it("asking while signed out opens sign-in, then the access dialog, and sends nothing yet", async () => {
@@ -104,8 +126,8 @@ describe("Workspace", () => {
   it("the sidebar offers sign-in when signed out and the code when it is still needed", async () => {
     const user = userEvent.setup();
     mount();
-    const sidebar = within(await screen.findByRole("tabpanel"));
-    await user.click(sidebar.getByRole("button", { name: /sign in/i }));
+    const sidebar = within(await screen.findByRole("navigation", { name: /workspace/i }));
+    await user.click(sidebar.getAllByRole("button", { name: /sign in/i })[0]);
     expect(clerk.openSignIn).toHaveBeenCalledTimes(1);
     await user.click(await screen.findByRole("button", { name: /enter access code/i }));
     expect(await screen.findByRole("dialog", { name: /enter the access code/i })).toBeInTheDocument();
