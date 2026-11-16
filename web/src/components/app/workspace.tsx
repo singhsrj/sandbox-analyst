@@ -1,23 +1,28 @@
 "use client";
 
 import { nanoid } from "nanoid";
-import { useCallback, useEffect, useRef, useState } from "react";
+import type { GroupImperativeHandle } from "react-resizable-panels";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
+import { useMediaQuery } from "@/hooks/use-media-query";
 import { useSession } from "@/hooks/use-session";
 import {
   AuthRequiredError,
   deleteThread,
   getExamples,
   getReplay,
-  getSchema,
   getThread,
   listReplays,
   listThreads,
 } from "@/lib/api";
 import { THREAD_ID_PATTERN } from "@/lib/config";
+import { loadLayout, saveLayout } from "@/lib/panel-layout";
+import { SAMPLE_DATASET } from "@/lib/profile";
 import { runsToMessages } from "@/lib/replay";
-import type { AnalystMessage, ReplaySummary, SchemaTable, ThreadSummary } from "@/lib/types";
+import type { AnalystMessage, ReplaySummary, ThreadSummary } from "@/lib/types";
 import { AccessDialog } from "./access-dialog";
 import { ChatSession } from "./chat-session";
+import { DataProfilePanel } from "./data-profile-panel";
 import { Sidebar } from "./sidebar";
 
 const FALLBACK_EXAMPLES = [
@@ -35,18 +40,49 @@ interface Opened {
 
 const REPLAY_ID = /^[a-z0-9][a-z0-9-]{1,59}$/;
 
+const PANELS_CLOSED = ["sidebar", "chat"];
+const PANELS_OPEN = ["sidebar", "profile", "chat"];
+const noSubscribe = () => () => undefined;
+
 export function Workspace({ fetchImpl }: { fetchImpl?: typeof fetch }) {
   const { signedIn, liveAccess, accessKnown, ready, openSignIn, unlock } = useSession();
   const [opened, setOpened] = useState<Opened | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [threads, setThreads] = useState<ThreadSummary[]>([]);
-  const [schema, setSchema] = useState<SchemaTable[] | null>(null);
-  const [schemaError, setSchemaError] = useState<string | null>(null);
   const [examples, setExamples] = useState<string[]>(FALLBACK_EXAMPLES);
   const [replays, setReplays] = useState<ReplaySummary[]>([]);
   const [signInOpen, setSignInOpen] = useState(false);
   const [signInReason, setSignInReason] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const isDesktop = useMediaQuery("(min-width: 768px)");
+  // The resizable layout depends on widths saved in this browser, so it is drawn only after
+  // hydration; the server's HTML cannot know them.
+  const hydrated = useSyncExternalStore(noSubscribe, () => true, () => false);
+  const groupRef = useRef<GroupImperativeHandle | null>(null);
+  const [initialLayout] = useState(() => loadLayout(false, PANELS_CLOSED));
+  // Panels added after mount get default widths, so apply the remembered ones on open/close.
+  // The new panel registers with the group a frame or two after it renders, so wait for it.
+  useEffect(() => {
+    const ids = profileOpen ? PANELS_OPEN : PANELS_CLOSED;
+    const saved = loadLayout(profileOpen, ids);
+    if (!saved) return;
+    let frame = 0;
+    let tries = 0;
+    const apply = () => {
+      const group = groupRef.current;
+      const ready = group && Object.keys(group.getLayout()).sort().join() === [...ids].sort().join();
+      if (ready) {
+        try {
+          group.setLayout(saved);
+        } catch {
+          /* keep the default widths */
+        }
+      } else if (tries++ < 10) frame = requestAnimationFrame(apply);
+    };
+    frame = requestAnimationFrame(apply);
+    return () => cancelAnimationFrame(frame);
+  }, [profileOpen, hydrated, isDesktop]);
 
   const startNew = useCallback(() => {
     setLoadError(null);
@@ -100,7 +136,7 @@ export function Workspace({ fetchImpl }: { fetchImpl?: typeof fetch }) {
     }
   }, []);
 
-  // Public data: examples and the schema never need an access code.
+  // Public data: examples and recorded runs never need an access code.
   useEffect(() => {
     getExamples()
       .then(setExamples)
@@ -108,9 +144,6 @@ export function Workspace({ fetchImpl }: { fetchImpl?: typeof fetch }) {
     listReplays()
       .then(setReplays)
       .catch(() => undefined); // replay mode is optional
-    getSchema()
-      .then(setSchema)
-      .catch(() => setSchemaError("Could not load the schema. Is the API running?"));
   }, []);
 
   // First load: reopen the thread named in the URL if we can, otherwise start a new one.
@@ -202,8 +235,11 @@ export function Workspace({ fetchImpl }: { fetchImpl?: typeof fetch }) {
       onSelectThread={(id) => void openThread(id)}
       onNewThread={startNew}
       onDeleteThread={(id) => void handleDelete(id)}
-      schema={schema}
-      schemaError={schemaError}
+      profileOpen={profileOpen}
+      onToggleProfile={() => {
+        setMenuOpen(false);
+        setProfileOpen((open) => !open);
+      }}
       signedIn={signedIn}
       liveAccess={liveAccess}
       onRequestSignIn={openSignIn}
@@ -212,45 +248,86 @@ export function Workspace({ fetchImpl }: { fetchImpl?: typeof fetch }) {
     />
   );
 
+  const chat = (
+    <main className="flex h-full min-h-0 min-w-0 flex-1 flex-col">
+      {loadError ? (
+        <p role="alert" className="border-b px-5 py-2 text-sm text-destructive">
+          {loadError}
+        </p>
+      ) : null}
+      {opened ? (
+        <ChatSession
+          key={opened.id}
+          threadId={opened.id}
+          initialMessages={opened.messages}
+          canRunLive={liveAccess}
+          examples={examples}
+          replay={opened.replay}
+          replays={replays}
+          onOpenReplay={(id) => void openReplay(id)}
+          onExitReplay={startNew}
+          onNeedSignIn={requestSignIn}
+          onTurnFinished={() => void refreshThreads()}
+          onOpenMenu={() => setMenuOpen(true)}
+          fetchImpl={fetchImpl}
+        />
+      ) : (
+        <p className="p-6 text-sm text-muted-foreground" role="status">
+          Loading…
+        </p>
+      )}
+    </main>
+  );
+  const profile = <DataProfilePanel dataset={SAMPLE_DATASET} onClose={() => setProfileOpen(false)} />;
+
   return (
     <div className="flex h-dvh w-full overflow-hidden">
-      <aside className="hidden w-72 shrink-0 border-r md:block">{sidebar()}</aside>
+      {!hydrated ? (
+        <p className="p-6 text-sm text-muted-foreground" role="status">
+          Loading…
+        </p>
+      ) : isDesktop ? (
+        // Sidebar | data profile (when open) | chat, each divider draggable; widths are remembered.
+        <ResizablePanelGroup
+          orientation="horizontal"
+          id="workspace"
+          groupRef={groupRef}
+          defaultLayout={initialLayout}
+          onLayoutChanged={saveLayout}
+        >
+          <ResizablePanel id="sidebar" defaultSize="20" minSize={220} maxSize="35">
+            {sidebar()}
+          </ResizablePanel>
+          <ResizableHandle />
+          {profileOpen ? (
+            <>
+              <ResizablePanel id="profile" defaultSize="38" minSize={300}>
+                {profile}
+              </ResizablePanel>
+              <ResizableHandle />
+            </>
+          ) : null}
+          <ResizablePanel id="chat" minSize={360}>
+            {chat}
+          </ResizablePanel>
+        </ResizablePanelGroup>
+      ) : (
+        <>
+          {chat}
+          {profileOpen ? (
+            <div className="fixed inset-0 z-30" role="dialog" aria-modal="true" aria-label="Data profile">
+              {profile}
+            </div>
+          ) : null}
+        </>
+      )}
 
-      {menuOpen ? (
-        <div className="fixed inset-0 z-40 md:hidden" role="dialog" aria-modal="true" aria-label="Menu">
+      {menuOpen && !isDesktop ? (
+        <div className="fixed inset-0 z-40" role="dialog" aria-modal="true" aria-label="Menu">
           <button className="absolute inset-0 bg-black/40" aria-label="Close menu" onClick={() => setMenuOpen(false)} />
           <aside className="relative h-full w-[85%] max-w-xs border-r shadow-lg">{sidebar(() => setMenuOpen(false))}</aside>
         </div>
       ) : null}
-
-      <main className="flex min-h-0 min-w-0 flex-1 flex-col">
-        {loadError ? (
-          <p role="alert" className="border-b px-5 py-2 text-sm text-destructive">
-            {loadError}
-          </p>
-        ) : null}
-        {opened ? (
-          <ChatSession
-            key={opened.id}
-            threadId={opened.id}
-            initialMessages={opened.messages}
-            canRunLive={liveAccess}
-            examples={examples}
-            replay={opened.replay}
-            replays={replays}
-            onOpenReplay={(id) => void openReplay(id)}
-            onExitReplay={startNew}
-            onNeedSignIn={requestSignIn}
-            onTurnFinished={() => void refreshThreads()}
-            onOpenMenu={() => setMenuOpen(true)}
-            fetchImpl={fetchImpl}
-          />
-        ) : (
-          <p className="p-6 text-sm text-muted-foreground" role="status">
-            Loading…
-          </p>
-        )}
-      </main>
 
       <AccessDialog
         open={signInOpen}

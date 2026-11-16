@@ -94,19 +94,6 @@ export interface ApprovalDecision {
   editedQuery?: string;
 }
 
-export interface SchemaColumn {
-  name: string;
-  type: string;
-  nullable: boolean;
-  note: string;
-}
-export interface SchemaTable {
-  name: string;
-  approx_rows: number;
-  description: string;
-  columns: SchemaColumn[];
-}
-
 /** A recorded, checked run that anyone can watch (GET /api/replays). */
 export interface ReplaySummary {
   id: string;
@@ -120,4 +107,99 @@ export interface ReplaySummary {
 
 export interface ReplayDetail extends ReplaySummary {
   runs: StoredRun[];
+}
+
+// --- data profile (GET /api/profiles/{dataset}) -------------------------------------------
+
+export type ColumnKind = "id" | "pii" | "boolean" | "datetime" | "numeric" | "categorical" | "text";
+
+export interface HistogramBin {
+  start: number;
+  end: number;
+  count: number;
+}
+
+export interface TopValue {
+  value: string | null;
+  count: number;
+  pct: number;
+  /** The folded tail ("everything else"). */
+  other?: boolean;
+}
+
+export interface ProfileColumn {
+  name: string;
+  type: string;
+  kind: ColumnKind;
+  note: string;
+  missing: number;
+  missing_pct: number;
+  distinct: number;
+  /** Never set for personal-data columns. */
+  example: string | null;
+  stats?: {
+    min: number;
+    p25: number;
+    median: number;
+    mean: number;
+    p75: number;
+    max: number;
+    std: number | null;
+    skew: number | null;
+  };
+  histogram?: HistogramBin[];
+  outliers?: {
+    method: "iqr";
+    lower: number;
+    upper: number;
+    count: number;
+    pct: number;
+    examples: number[];
+  };
+  top_values?: TopValue[];
+  date_range?: { min: string; max: string };
+  timeline?: { unit: "day" | "month" | "year"; points: { period: string; count: number }[] };
+  length?: { min: number; mean: number; max: number };
+}
+
+export interface ProfileTable {
+  name: string;
+  description: string;
+  rows: number;
+  columns: ProfileColumn[];
+  correlations: { method: string; columns: string[]; matrix: (number | null)[][] } | null;
+}
+
+export interface ProfileRelationship {
+  from_table: string;
+  from_column: string;
+  to_table: string;
+  to_column: string;
+  kind: "foreign_key" | "inferred";
+  match_pct?: number;
+}
+
+export interface DataProfile {
+  version: number;
+  dataset: {
+    id: string;
+    name: string;
+    source: string;
+    generated_at: string;
+    tables: number;
+    rows: number;
+    columns: number;
+  };
+  summary: { text: string; model: string; ai_generated: boolean } | null;
+  tables: ProfileTable[];
+  relationships: ProfileRelationship[];
+  feature_importance: {
+    table: string;
+    target: string;
+    task: "classification" | "regression";
+    method: string;
+    description: string;
+    rows_used: number;
+    scores: { feature: string; score: number }[];
+  } | null;
 }

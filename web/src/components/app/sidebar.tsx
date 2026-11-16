@@ -1,15 +1,12 @@
 "use client";
 
 import { UserButton } from "@clerk/nextjs";
-import { PlusIcon, Trash2Icon, XIcon } from "lucide-react";
-import { useState } from "react";
+import { ChartColumnIcon, PlusIcon, Trash2Icon, XIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { formatCount, formatRelative } from "@/lib/format";
-import type { SchemaTable, ThreadSummary } from "@/lib/types";
+import { formatRelative } from "@/lib/format";
+import type { ThreadSummary } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "./theme-toggle";
-
-type Tab = "history" | "data";
 
 interface SidebarProps {
   threads: ThreadSummary[];
@@ -17,8 +14,9 @@ interface SidebarProps {
   onSelectThread: (id: string) => void;
   onNewThread: () => void;
   onDeleteThread: (id: string) => void;
-  schema: SchemaTable[] | null;
-  schemaError: string | null;
+  /** The data profile panel is open beside the chat. */
+  profileOpen: boolean;
+  onToggleProfile: () => void;
   signedIn: boolean;
   /** Signed in and the access code entered. */
   liveAccess: boolean;
@@ -28,9 +26,8 @@ interface SidebarProps {
 }
 
 export function Sidebar(props: SidebarProps) {
-  const [tab, setTab] = useState<Tab>("history");
   return (
-    <div className="flex h-full min-h-0 flex-col bg-sidebar text-sidebar-foreground">
+    <nav aria-label="Workspace" className="flex h-full min-h-0 flex-col bg-sidebar text-sidebar-foreground">
       <div className="flex items-center justify-between px-4 pt-4 pb-3">
         <div className="flex items-center gap-2">
           <span className="marked text-base font-semibold tracking-tight">SandboxAnalyst</span>
@@ -42,41 +39,25 @@ export function Sidebar(props: SidebarProps) {
         ) : null}
       </div>
 
-      <div className="px-3 pb-3">
+      <div className="grid gap-1.5 px-3 pb-3">
         <Button variant="outline" className="w-full justify-start" onClick={props.onNewThread}>
           <PlusIcon aria-hidden="true" />
           New question
         </Button>
+        <Button
+          variant="ghost"
+          className="w-full justify-start aria-pressed:bg-sidebar-accent aria-pressed:font-medium"
+          onClick={props.onToggleProfile}
+          aria-pressed={props.profileOpen}
+        >
+          <ChartColumnIcon aria-hidden="true" />
+          Data profile
+        </Button>
       </div>
 
-      <div role="tablist" aria-label="Sidebar sections" className="flex gap-4 border-b px-4">
-        {(
-          [
-            ["history", "History"],
-            ["data", "The data"],
-          ] as const
-        ).map(([id, label]) => (
-          <button
-            key={id}
-            role="tab"
-            id={`tab-${id}`}
-            aria-selected={tab === id}
-            aria-controls={`panel-${id}`}
-            onClick={() => setTab(id)}
-            className={cn(
-              "-mb-px border-b-2 py-2 text-sm",
-              tab === id
-                ? "border-foreground font-medium"
-                : "border-transparent text-muted-foreground hover:text-foreground",
-            )}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-
-      <div className="min-h-0 flex-1 overflow-y-auto" role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`}>
-        {tab === "history" ? <ThreadList {...props} /> : <SchemaBrowser tables={props.schema} error={props.schemaError} />}
+      <h2 className="border-b px-4 pb-2 text-xs font-medium text-muted-foreground">History</h2>
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <ThreadList {...props} />
       </div>
 
       <div className="flex items-center justify-between gap-2 border-t px-3 py-2">
@@ -101,7 +82,7 @@ export function Sidebar(props: SidebarProps) {
         )}
         <ThemeToggle />
       </div>
-    </div>
+    </nav>
   );
 }
 
@@ -146,40 +127,5 @@ function ThreadList({ threads, activeThreadId, onSelectThread, onDeleteThread, s
         </li>
       ))}
     </ul>
-  );
-}
-
-export function SchemaBrowser({ tables, error }: { tables: SchemaTable[] | null; error: string | null }) {
-  if (error) return <p className="p-4 text-sm text-destructive">{error}</p>;
-  if (!tables) return <p className="p-4 text-sm text-muted-foreground">Loading the schema…</p>;
-  return (
-    <div className="grid py-1">
-      <p className="px-4 py-2 text-xs text-muted-foreground">
-        Synthetic shop data the agent can query. Read-only; nothing here is real customer data.
-      </p>
-      {tables.map((table) => (
-        <details key={table.name} className="group border-t">
-          <summary className="flex cursor-pointer list-none items-baseline justify-between gap-2 px-4 py-2 hover:bg-sidebar-accent">
-            <span className="font-mono text-sm">{table.name}</span>
-            <span className="text-xs tabular-nums text-muted-foreground">{formatCount(table.approx_rows)} rows</span>
-          </summary>
-          <div className="px-4 pb-3">
-            {table.description ? <p className="pb-2 text-xs text-muted-foreground">{table.description}</p> : null}
-            <ul className="grid gap-1">
-              {table.columns.map((col) => (
-                <li key={col.name} className="text-xs" title={col.note || undefined}>
-                  <span className="font-mono">{col.name}</span>{" "}
-                  <span className="text-muted-foreground">
-                    {col.type}
-                    {col.nullable ? ", may be empty" : ""}
-                  </span>
-                  {col.note ? <p className="text-muted-foreground">{col.note}</p> : null}
-                </li>
-              ))}
-            </ul>
-          </div>
-        </details>
-      ))}
-    </div>
   );
 }

@@ -13,6 +13,8 @@ const here = import.meta.dirname;
 const asset = (name) => readFileSync(path.join(here, "mock-assets", name));
 const fixture = JSON.parse(readFileSync(path.join(here, "..", "test-fixtures", "chunks.json"), "utf-8"));
 const schema = JSON.parse(readFileSync(path.join(here, "..", "test-fixtures", "schema.json"), "utf-8"));
+// The real, committed profile of the sample data (scripts/build_sample_profile.py).
+const sampleProfile = readFileSync(path.join(here, "..", "..", "api", "profiles", "sample.json"), "utf-8");
 const ANSWER = asset("answer.md").toString("utf-8");
 const CODE = "demo";
 const TOKEN = "mock-token.mock-signature";
@@ -77,6 +79,7 @@ createServer(async (req, res) => {
       "What will our revenue be in 2027?",
     ] }, cors);
   if (url.pathname === "/api/schema") return send(res, 200, schema, cors);
+  if (url.pathname === "/api/profiles/sample") return send(res, 200, JSON.parse(sampleProfile), cors);
   if (url.pathname === "/api/session")
     return body?.code === CODE
       ? send(res, 200, { token: TOKEN, expires_at: Math.floor(Date.now() / 1000) + 7200, client_id: body.client_id ?? "mock-client-0001" }, cors)

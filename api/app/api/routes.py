@@ -3,6 +3,7 @@
 GET    /api/health
 GET    /api/examples                         anonymous: example question chips
 GET    /api/schema                           anonymous: schema browser data
+GET    /api/profiles/{dataset}               anonymous: statistical profile (sample data)
 POST   /api/suggestions                      anonymous: "what else should there be?"
 GET    /api/me                               the signed-in user, live access or not [auth]
 POST   /api/access                           access code -> live access, once       [auth]
@@ -20,12 +21,13 @@ GET    /api/replays[/{slug}[/files/{name}]]  recorded, checked runs (replay mode
 
 from __future__ import annotations
 
+import json
 import mimetypes
 import time
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -184,6 +186,31 @@ async def schema(services: ServicesDep) -> dict[str, Any]:
     }
     _schema_cache.update(at=time.monotonic(), value=value)
     return value
+
+
+_PROFILE_IDS = frozenset({"sample"})  # uploads get their own profiles in a later change
+_profile_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+
+
+@router.get("/profiles/{dataset}")
+async def profile(dataset: str, services: ServicesDep, response: Response) -> dict[str, Any]:
+    """The statistical profile of a dataset: tables, distributions, outliers, ER diagram.
+
+    The sample data's profile is a static file built by scripts/build_sample_profile.py.
+    """
+    if dataset not in _PROFILE_IDS:
+        raise HTTPException(status_code=404, detail="No profile for that dataset.")
+    path = services.settings.profiles_dir / f"{dataset}.json"
+    try:
+        mtime = path.stat().st_mtime
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="No profile for that dataset.") from None
+    cached = _profile_cache.get(dataset)
+    if cached is None or cached[0] != mtime:
+        cached = (mtime, json.loads(path.read_text(encoding="utf-8")))
+        _profile_cache[dataset] = cached
+    response.headers["Cache-Control"] = "public, max-age=300"
+    return cached[1]
 
 
 @router.post("/suggestions", status_code=204)

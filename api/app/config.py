@@ -72,6 +72,7 @@ class Settings(BaseSettings):
 
     artifacts_dir: Path = REPO_ROOT / "runs"  # sandbox deliverables + saved run records
     replays_dir: Path = REPO_ROOT / "api" / "replays"  # recorded runs anyone can watch
+    profiles_dir: Path = REPO_ROOT / "api" / "profiles"  # static data profiles (sample data)
 
     # --- observability (Langfuse) ---
     langfuse_public_key: SecretStr | None = None

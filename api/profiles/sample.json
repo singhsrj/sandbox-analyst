@@ -1,0 +1,2557 @@
+{
+ "version": 1,
+ "dataset": {
+  "id": "sample",
+  "name": "Sample shop data",
+  "source": "postgres",
+  "generated_at": "2026-11-16T01:09:45+00:00",
+  "tables": 8,
+  "rows": 207418,
+  "columns": 45
+ },
+ "summary": {
+  "text": "The sample shop dataset records the activity of a retail platform from mid-2023 through the end of 2025. It contains a customers table (one row per 5,012 customers) linked to regions and, when present, to a marketing_campaigns table; orders (50,021 rows) reference customers and regions; each order is broken into order_items (80,355 rows) that point to products (120 rows). Payments (48,806 rows) attach to orders, and product reviews (23,088 rows) join to both customers and products. Marketing campaigns (11 rows) are defined by start and end dates and budget. The time dimension spans signup dates from July 2023 to November 2025, and transactional dates from January 2024 to December 2025. Analysts should note that acquisition_campaign_id is missing for more than half of customers and cost_usd is absent in 12.5 % of products, so joins may produce nulls. Several numeric fields show notable outlier rates—unit_price (≈9.5 %), quantity (15 %), discount_pct (14 %) and total_amount (≈6 %)—which can distort averages. Finally, the data are heavily imbalanced: the Standard customer segment accounts for over half of the base, 96 % of orders are delivered, and returns occur in only about 9 % of line items, so any segmentation or return-rate analysis must account for these skewed distributions.",
+  "model": "openai.gpt-oss-120b",
+  "ai_generated": true
+ },
+ "tables": [
+  {
+   "name": "customers",
+   "description": "",
+   "rows": 5012,
+   "columns": [
+    {
+     "name": "customer_id",
+     "type": "integer",
+     "kind": "id",
+     "note": "",
+     "missing": 0,
+     "missing_pct": 0.0,
+     "distinct": 5012,
+     "example": "1"
+    },
+    {
+     "name": "full_name",
+     "type": "text",
+     "kind": "pii",
+     "note": "",
+     "missing": 0,
+     "missing_pct": 0.0,
+     "distinct": 1180,
+     "example": null
+    },
+    {
+     "name": "email",
+     "type": "text",
+     "kind": "pii",
+     "note": "May be NULL; the same email can appear on more than one customer row.",
+     "missing": 40,
+     "missing_pct": 0.798,
+     "distinct": 4960,
+     "example": null
+    },
+    {
+     "name": "region_id",
+     "type": "smallint",
+     "kind": "id",
+     "note": "",
+     "missing": 0,
+     "missing_pct": 0.0,
+     "distinct": 5,
+     "example": "3",
+     "top_values": [
+      {
+       "value": "2",
+       "count": 1569,
+       "pct": 31.3
+      },
+      {
+       "value": "1",
+       "count": 1111,
+       "pct": 22.2
+      },
+      {
+       "value": "4",
+       "count": 983,
+       "pct": 19.6
+      },
+      {
+       "value": "3",
+       "count": 833,
+       "pct": 16.6
+      },
+      {
+       "value": "5",
+       "count": 516,
+       "pct": 10.3
+      }
+     ]
+    },
+    {
+     "name": "segment",
+     "type": "text",
+     "kind": "categorical",
+     "note": "Premium | Standard | Budget.",
+     "missing": 0,
+     "missing_pct": 0.0,
+     "distinct": 3,
+     "example": "Standard",
+     "top_values": [
+      {
+       "value": "Standard",
+       "count": 2779,
+       "pct": 55.4
+      },
+      {
+       "value": "Budget",
+       "count": 1482,
+       "pct": 29.6
+      },
+      {
+       "value": "Premium",
+       "count": 751,
+       "pct": 15.0
+      }
+     ]
+    },
+    {
+     "name": "signup_date",
+     "type": "date",
+     "kind": "datetime",
+     "note": "",
+     "missing": 0,
+     "missing_pct": 0.0,
+     "distinct": 879,
+     "example": "2025-02-21T00:00:00",
+     "date_range": {
+      "min": "2023-07-01T00:00:00",
+      "max": "2025-11-29T00:00:00"
+     },
+     "timeline": {
+      "unit": "month",
+      "points": [
+       {
+        "period": "2023-07",
+        "count": 153
+       },
+       {
+        "period": "2023-08",
+        "count": 118
+       },
+       {
+        "period": "2023-09",
+        "count": 121
+       },
+       {
+        "period": "2023-10",
+        "count": 126
+       },
+       {
+        "period": "2023-11",
+        "count": 127
+       },
+       {
+        "period": "2023-12",
+        "count": 146
+       },
+       {
+        "period": "2024-01",
+        "count": 136
+       },
+       {
+        "period": "2024-02",
+        "count": 122
+       },
+       {
+        "period": "2024-03",
+        "count": 164
+       },
+       {
+        "period": "2024-04",
+        "count": 166
+       },
+       {
+        "period": "2024-05",
+        "count": 169
+       },
+       {
+        "period": "2024-06",
+        "count": 178
+       },
+       {
+        "period": "2024-07",
+        "count": 172
+       },
+       {
+        "period": "2024-08",
+        "count": 188
+       },
+       {
+        "period": "2024-09",
+        "count": 166
+       },
+       {
+        "period": "2024-10",
+        "count": 187
+       },
+       {
+        "period": "2024-11",
+        "count": 219
+       },
+       {
+        "period": "2024-12",
+        "count": 186
+       },
+       {
+        "period": "2025-01",
+        "count": 195
+       },
+       {
+        "period": "2025-02",
+        "count": 211
+       },
+       {
+        "period": "2025-03",
+        "count": 204
+       },
+       {
+        "period": "2025-04",
+        "count": 207
+       },
+       {
+        "period": "2025-05",
+        "count": 184
+       },
+       {
+        "period": "2025-06",
+        "count": 177
+       },
+       {
+        "period": "2025-07",
+        "count": 216
+       },
+       {
+        "period": "2025-08",
+        "count": 215
+       },
+       {
+        "period": "2025-09",
+        "count": 168
+       },
+       {
+        "period": "2025-10",
+        "count": 208
+       },
+       {
+        "period": "2025-11",
+        "count": 183
+       }
+      ]
+     }
+    },
+    {
+     "name": "acquisition_campaign_id",
+     "type": "integer",
+     "kind": "id",
+     "note": "",
+     "missing": 2761,
+     "missing_pct": 55.1,
+     "distinct": 11,
+     "example": "11.0",
+     "top_values": [
+      {
+       "value": "11.0",
+       "count": 1394,
+       "pct": 61.9
+      },
+      {
+       "value": "8.0",
+       "count": 168,
+       "pct": 7.46
+      },
+      {
+       "value": "7.0",
+       "count": 148,
+       "pct": 6.57
+      },
+      {
+       "value": "9.0",
+       "count": 128,
+       "pct": 5.69
+      },
+      {
+       "value": "3.0",
+       "count": 126,
+       "pct": 5.6
+      },
+      {
+       "value": "2.0",
+       "count": 94,
+       "pct": 4.18
+      },
+      {
+       "value": "4.0",
+       "count": 68,
+       "pct": 3.02
+      },
+      {
+       "value": "6.0",
+       "count": 35,
+       "pct": 1.55
+      },
+      {
+       "value": "1.0",
+       "count": 33,
+       "pct": 1.47
+      },
+      {
+       "value": "5.0",
+       "count": 31,
+       "pct": 1.38
+      },
+      {
+       "value": null,
+       "other": true,
+       "count": 26,
+       "pct": 1.16
+      }
+     ]
+    }
+   ],
+   "correlations": null
+  },
+  {
+   "name": "marketing_campaigns",
+   "description": "",
+   "rows": 11,
+   "columns": [
+    {
+     "name": "campaign_id",
+     "type": "integer",
+     "kind": "id",
+     "note": "",
+     "missing": 0,
+     "missing_pct": 0.0,
+     "distinct": 11,
+     "example": "1",
+     "top_values": [
+      {
+       "value": "1",
+       "count": 1,
+       "pct": 9.09
+      },
+      {
+       "value": "2",
+       "count": 1,
+       "pct": 9.09
+      },
+      {
+       "value": "3",
+       "count": 1,
+       "pct": 9.09
+      },
+      {
+       "value": "4",
+       "count": 1,
+       "pct": 9.09
+      },
+      {
+       "value": "5",
+       "count": 1,
+       "pct": 9.09
+      },
+      {
+       "value": "6",
+       "count": 1,
+       "pct": 9.09
+      },
+      {
+       "value": "7",
+       "count": 1,
+       "pct": 9.09
+      },
+      {
+       "value": "8",
+       "count": 1,
+       "pct": 9.09
+      },
+      {
+       "value": "9",
+       "count": 1,
+       "pct": 9.09
+      },
+      {
+       "value": "10",
+       "count": 1,
+       "pct": 9.09
+      },
+      {
+       "value": null,
+       "other": true,
+       "count": 1,
+       "pct": 9.09
+      }
+     ]
+    },
+    {
+     "name": "campaign_name",
+     "type": "text",
+     "kind": "categorical",
+     "note": "",
+     "missing": 0,
+     "missing_pct": 0.0,
+     "distinct": 11,
+     "example": "New Year Kickoff",
+     "top_values": [
+      {
+       "value": "New Year Kickoff",
+       "count": 1,
+       "pct": 9.09
+      },
+      {
+       "value": "Spring Social Push",
+       "count": 1,
+       "pct": 9.09
+      },
+      {
+       "value": "Summer Search Boost",
+       "count": 1,
+       "pct": 9.09
+      },
+      {
+       "value": "Back To School",
+       "count": 1,
+       "pct": 9.09
+      },
+      {
+       "value": "Black Friday 2024",
+       "count": 1,
+       "pct": 9.09
+      },
+      {
+       "value": "Holiday Gifting 2024",
+       "count": 1,
+       "pct": 9.09
+      },
+      {
+       "value": "Q1 Referral Drive",
+       "count": 1,
+       "pct": 9.09
+      },
+      {
+       "value": "Spring Search 2025",
+       "count": 1,
+       "pct": 9.09
+      },
+      {
+       "value": "Summer Influencer 2025",
+       "count": 1,
+       "pct": 9.09
+      },
+      {
+       "value": "Black Friday 2025",
+       "count": 1,
+       "pct": 9.09
+      },
+      {
+       "value": null,
+       "other": true,
+       "count": 1,
+       "pct": 9.09
+      }
+     ]
+    },
+    {
+     "name": "channel",
+     "type": "text",
+     "kind": "categorical",
+     "note": "",
+     "missing": 0,
+     "missing_pct": 0.0,
+     "distinct": 5,
+     "example": "email",
+     "top_values": [
+      {
+       "value": "email",
+       "count": 3,
+       "pct": 27.3
+      },
+      {
+       "value": "social",
+       "count": 3,
+       "pct": 27.3
+      },
+      {
+       "value": "search",
+       "count": 3,
+       "pct": 27.3
+      },
+      {
+       "value": "display",
+       "count": 1,
+       "pct": 9.09
+      },
+      {
+       "value": "referral",
+       "count": 1,
+       "pct": 9.09
+      }
+     ]
+    },
+    {
+     "name": "start_date",
+     "type": "date",
+     "kind": "datetime",
+     "note": "",
+     "missing": 0,
+     "missing_pct": 0.0,
+     "distinct": 10,
+     "example": "2024-01-01T00:00:00",
+     "date_range": {
+      "min": "2024-01-01T00:00:00",
+      "max": "2025-11-10T00:00:00"
+     },
+     "timeline": {
+      "unit": "month",
+      "points": [
+       {
+        "period": "2024-01",
+        "count": 2
+       },
+       {
+        "period": "2024-03",
+        "count": 1
+       },
+       {
+        "period": "2024-06",
+        "count": 1
+       },
+       {
+        "period": "2024-08",
+        "count": 1
+       },
+       {
+        "period": "2024-11",
+        "count": 1
+       },
+       {
+        "period": "2024-12",
+        "count": 1
+       },
+       {
+        "period": "2025-01",
+        "count": 1
+       },
+       {
+        "period": "2025-04",
+        "count": 1
+       },
+       {
+        "period": "2025-07",
+        "count": 1
+       },
+       {
+        "period": "2025-11",
+        "count": 1
+       }
+      ]
+     }
+    },
+    {
+     "name": "end_date",
+     "type": "date",
+     "kind": "datetime",
+     "note": "",
+     "missing": 0,
+     "missing_pct": 0.0,
+     "distinct": 11,
+     "example": "2024-01-31T00:00:00",
+     "date_range": {
+      "min": "2024-01-31T00:00:00",
+      "max": "2025-12-31T00:00:00"
+     },
+     "timeline": {
+      "unit": "month",
+      "points": [
+       {
+        "period": "2024-01",
+        "count": 1
+       },
+       {
+        "period": "2024-04",
+        "count": 1
+       },
+       {
+        "period": "2024-08",
+        "count": 1
+       },
+       {
+        "period": "2024-09",
+        "count": 1
+       },
+       {
+        "period": "2024-12",
+        "count": 2
+       },
+       {
+        "period": "2025-03",
+        "count": 1
+       },
+       {
+        "period": "2025-06",
+        "count": 1
+       },
+       {
+        "period": "2025-09",
+        "count": 1
+       },
+       {
+        "period": "2025-12",
+        "count": 2
+       }
+      ]
+     }
+    },
+    {
+     "name": "budget_usd",
+     "type": "numeric(12,2)",
+     "kind": "numeric",
+     "note": "",
+     "missing": 0,
+     "missing_pct": 0.0,
+     "distinct": 11,
+     "example": "8000.0",
+     "stats": {
+      "min": 8000.0,
+      "p25": 13500.0,
+      "median": 20000.0,
+      "mean": 19545.0,
+      "p75": 23000.0,
+      "max": 40000.0,
+      "std": 9015.0,
+      "skew": 0.9499
+     },
+     "histogram": [
+      {
+       "start": 8000.0,
+       "end": 8000.0,
+       "count": 1
+      },
+      {
+       "start": 9000.0,
+       "end": 9000.0,
+       "count": 1
+      },
+      {
+       "start": 12000.0,
+       "end": 12000.0,
+       "count": 1
+      },
+      {
+       "start": 15000.0,
+       "end": 15000.0,
+       "count": 1
+      },
+      {
+       "start": 18000.0,
+       "end": 18000.0,
+       "count": 1
+      },
+      {
+       "start": 20000.0,
+       "end": 20000.0,
+       "count": 1
+      },
+      {
+       "start": 21000.0,
+       "end": 21000.0,
+       "count": 1
+      },
+      {
+       "start": 22000.0,
+       "end": 22000.0,
+       "count": 1
+      },
+      {
+       "start": 24000.0,
+       "end": 24000.0,
+       "count": 1
+      },
+      {
+       "start": 26000.0,
+       "end": 26000.0,
+       "count": 1
+      },
+      {
+       "start": 40000.0,
+       "end": 40000.0,
+       "count": 1
+      }
+     ],
+     "outliers": {
+      "method": "iqr",
+      "lower": -750.0,
+      "upper": 37250.0,
+      "count": 1,
+      "pct": 9.09,
+      "examples": [
+       40000.0
+      ]
+     }
+    }
+   ],
+   "correlations": null
+  },
+  {
+   "name": "order_items",
+   "description": "",
+   "rows": 80355,
+   "columns": [
+    {
+     "name": "order_item_id",
+     "type": "integer",
+     "kind": "id",
+     "note": "",
+     "missing": 0,
+     "missing_pct": 0.0,
+     "distinct": 80355,
+     "example": "1"
+    },
+    {
+     "name": "order_id",
+     "type": "integer",
+     "kind": "id",
+     "note": "",
+     "missing": 0,
+     "missing_pct": 0.0,
+     "distinct": 50021,
+     "example": "1"
+    },
+    {
+     "name": "product_id",
+     "type": "integer",
+     "kind": "id",
+     "note": "",
+     "missing": 0,
+     "missing_pct": 0.0,
+     "distinct": 120,
+     "example": "85"
+    },
+    {
+     "name": "quantity",
+     "type": "integer",
+     "kind": "numeric",
+     "note": "",
+     "missing": 0,
+     "missing_pct": 0.0,
+     "distinct": 3,
+     "example": "2",
+     "stats": {
+      "min": 1.0,
+      "p25": 1.0,
+      "median": 1.0,
+      "mean": 1.19,
+      "p75": 1.0,
+      "max": 3.0,
+      "std": 0.4822,
+      "skew": 2.561
+     },
+     "histogram": [
+      {
+       "start": 1.0,
+       "end": 1.0,
+       "count": 68289
+      },
+      {
+       "start": 2.0,
+       "end": 2.0,
+       "count": 8897
+      },
+      {
+       "start": 3.0,
+       "end": 3.0,
+       "count": 3169
+      }
+     ],
+     "outliers": {
+      "method": "iqr",
+      "lower": 1.0,
+      "upper": 1.0,
+      "count": 12066,
+      "pct": 15.0,
+      "examples": [
+       3.0,
+       3.0,
+       3.0,
+       3.0,
+       3.0
+      ]
+     }
+    },
+    {
+     "name": "unit_price",
+     "type": "numeric(10,2)",
+     "kind": "numeric",
+     "note": "USD price per unit at purchase time.",
+     "missing": 0,
+     "missing_pct": 0.0,
+     "distinct": 28128,
+     "example": "270.04",
+     "stats": {
+      "min": 5.82,
+      "p25": 31.69,
+      "median": 78.64,
+      "mean": 156.9,
+      "p75": 188.4,
+      "max": 885.1,
+      "std": 189.1,
+      "skew": 2.046
+     },
+     "histogram": [
+      {
+       "start": 5.82,
+       "end": 49.78,
+       "count": 26159
+      },
+      {
+       "start": 49.78,
+       "end": 93.75,
+       "count": 17005
+      },
+      {
+       "start": 93.75,
+       "end": 137.7,
+       "count": 8415
+      },
+      {
+       "start": 137.7,
+       "end": 181.7,
+       "count": 7509
+      },
+      {
+       "start": 181.7,
+       "end": 225.6,
+       "count": 5467
+      },
+      {
+       "start": 225.6,
+       "end": 269.6,
+       "count": 3173
+      },
+      {
+       "start": 269.6,
+       "end": 313.6,
+       "count": 2376
+      },
+      {
+       "start": 313.6,
+       "end": 357.5,
+       "count": 141
+      },
+      {
+       "start": 357.5,
+       "end": 401.5,
+       "count": 1817
+      },
+      {
+       "start": 401.5,
+       "end": 445.5,
+       "count": 614
+      },
+      {
+       "start": 445.5,
+       "end": 489.4,
+       "count": 57
+      },
+      {
+       "start": 489.4,
+       "end": 533.4,
+       "count": 1697
+      },
+      {
+       "start": 533.4,
+       "end": 577.3,
+       "count": 1835
+      },
+      {
+       "start": 577.3,
+       "end": 621.3,
+       "count": 279
+      },
+      {
+       "start": 621.3,
+       "end": 665.3,
+       "count": 161
+      },
+      {
+       "start": 665.3,
+       "end": 709.2,
+       "count": 42
+      },
+      {
+       "start": 709.2,
+       "end": 753.2,
+       "count": 1197
+      },
+      {
+       "start": 753.2,
+       "end": 797.2,
+       "count": 1192
+      },
+      {
+       "start": 797.2,
+       "end": 841.1,
+       "count": 549
+      },
+      {
+       "start": 841.1,
+       "end": 885.1,
+       "count": 670
+      }
+     ],
+     "outliers": {
+      "method": "iqr",
+      "lower": -203.4,
+      "upper": 423.5,
+      "count": 7683,
+      "pct": 9.56,
+      "examples": [
+       885.1,
+       885.0,
+       885.0,
+       885.0,
+       885.0
+      ]
+     }
+    },
+    {
+     "name": "discount_pct",
+     "type": "numeric(5,2)",
+     "kind": "numeric",
+     "note": "Percent discount applied to this line (0-100).",
+     "missing": 0,
+     "missing_pct": 0.0,
+     "distinct": 7,
+     "example": "0.0",
+     "stats": {
+      "min": 0.0,
+      "p25": 0.0,
+      "median": 0.0,
+      "mean": 2.029,
+      "p75": 0.0,
+      "max": 30.0,
+      "std": 5.704,
+      "skew": 3.105
+     },
+     "histogram": [
+      {
+       "start": 0.0,
+       "end": 0.0,
+       "count": 68802
+      },
+      {
+       "start": 5.0,
+       "end": 5.0,
+       "count": 2553
+      },
+      {
+       "start": 10.0,
+       "end": 10.0,
+       "count": 2615
+      },
+      {
+       "start": 15.0,
+       "end": 15.0,
+       "count": 3567
+      },
+      {
+       "start": 20.0,
+       "end": 20.0,
+       "count": 925
+      },
+      {
+       "start": 25.0,
+       "end": 25.0,
+       "count": 931
+      },
+      {
+       "start": 30.0,
+       "end": 30.0,
+       "count": 962
+      }
+     ],
+     "outliers": {
+      "method": "iqr",
+      "lower": 0.0,
+      "upper": 0.0,
+      "count": 11553,
+      "pct": 14.4,
+      "examples": [
+       30.0,
+       30.0,
+       30.0,
+       30.0,
+       30.0
+      ]
+     }
+    },
+    {
+     "name": "is_returned",
+     "type": "boolean",
+     "kind": "boolean",
+     "note": "True if the customer returned this line after delivery.",
+     "missing": 0,
+     "missing_pct": 0.0,
+     "distinct": 2,
+     "example": "False",
+     "top_values": [
+      {
+       "value": "False",
+       "count": 73400,
+       "pct": 91.3
+      },
+      {
+       "value": "True",
+       "count": 6955,
+       "pct": 8.66
+      }
+     ]
+    }
+   ],
+   "correlations": {
+    "method": "spearman",
+    "columns": [
+     "quantity",
+     "unit_price",
+     "discount_pct"
+    ],
+    "matrix": [
+     [
+      1.0,
+      -0.00297,
+      -0.00165
+     ],
+     [
+      -0.00297,
+      1.0,
+      0.00461
+     ],
+     [
+      -0.00165,
+      0.00461,
+      1.0
+     ]
+    ]
+   }
+  },
+  {
+   "name": "orders",
+   "description": "One row per order. Revenue questions should normally use delivered orders only.",
+   "rows": 50021,
+   "columns": [
+    {
+     "name": "order_id",
+     "type": "integer",
+     "kind": "id",
+     "note": "",
+     "missing": 0,
+     "missing_pct": 0.0,
+     "distinct": 50021,
+     "example": "1"
+    },
+    {
+     "name": "customer_id",
+     "type": "integer",
+     "kind": "id",
+     "note": "",
+     "missing": 0,
+     "missing_pct": 0.0,
+     "distinct": 4817,
+     "example": "26"
+    },
+    {
+     "name": "region_id",
+     "type": "smallint",
+     "kind": "id",
+     "note": "Region of the customer at order time.",
+     "missing": 0,
+     "missing_pct": 0.0,
+     "distinct": 5,
+     "example": "2",
+     "top_values": [
+      {
+       "value": "2",
+       "count": 15322,
+       "pct": 30.6
+      },
+      {
+       "value": "1",
+       "count": 11210,
+       "pct": 22.4
+      },
+      {
+       "value": "4",
+       "count": 9958,
+       "pct": 19.9
+      },
+      {
+       "value": "3",
+       "count": 8467,
+       "pct": 16.9
+      },
+      {
+       "value": "5",
+       "count": 5064,
+       "pct": 10.1
+      }
+     ]
+    },
+    {
+     "name": "order_date",
+     "type": "timestamp without time zone",
+     "kind": "datetime",
+     "note": "",
+     "missing": 0,
+     "missing_pct": 0.0,
+     "distinct": 49996,
+     "example": "2024-01-01T22:04:40",
+     "date_range": {
+      "min": "2024-01-01T00:14:11",
+      "max": "2025-12-31T23:40:51"
+     },
+     "timeline": {
+      "unit": "month",
+      "points": [
+       {
+        "period": "2024-01",
+        "count": 1264
+       },
+       {
+        "period": "2024-02",
+        "count": 1457
+       },
+       {
+        "period": "2024-03",
+        "count": 1509
+       },
+       {
+        "period": "2024-04",
+        "count": 1586
+       },
+       {
+        "period": "2024-05",
+        "count": 1611
+       },
+       {
+        "period": "2024-06",
+        "count": 1657
+       },
+       {
+        "period": "2024-07",
+        "count": 1724
+       },
+       {
+        "period": "2024-08",
+        "count": 1773
+       },
+       {
+        "period": "2024-09",
+        "count": 1776
+       },
+       {
+        "period": "2024-10",
+        "count": 1897
+       },
+       {
+        "period": "2024-11",
+        "count": 3047
+       },
+       {
+        "period": "2024-12",
+        "count": 2819
+       },
+       {
+        "period": "2025-01",
+        "count": 1735
+       },
+       {
+        "period": "2025-02",
+        "count": 1793
+       },
+       {
+        "period": "2025-03",
+        "count": 1571
+       },
+       {
+        "period": "2025-04",
+        "count": 2096
+       },
+       {
+        "period": "2025-05",
+        "count": 2202
+       },
+       {
+        "period": "2025-06",
+        "count": 2077
+       },
+       {
+        "period": "2025-07",
+        "count": 2319
+       },
+       {
+        "period": "2025-08",
+        "count": 2306
+       },
+       {
+        "period": "2025-09",
+        "count": 2215
+       },
+       {
+        "period": "2025-10",
+        "count": 2411
+       },
+       {
+        "period": "2025-11",
+        "count": 3768
+       },
+       {
+        "period": "2025-12",
+        "count": 3408
+       }
+      ]
+     }
+    },
+    {
+     "name": "status",
+     "type": "text",
+     "kind": "categorical",
+     "note": "delivered | cancelled. Cancelled orders are not revenue.",
+     "missing": 0,
+     "missing_pct": 0.0,
+     "distinct": 2,
+     "example": "delivered",
+     "top_values": [
+      {
+       "value": "delivered",
+       "count": 48011,
+       "pct": 96.0
+      },
+      {
+       "value": "cancelled",
+       "count": 2010,
+       "pct": 4.02
+      }
+     ]
+    },
+    {
+     "name": "total_amount",
+     "type": "numeric(12,2)",
+     "kind": "numeric",
+     "note": "USD, net of line discounts, before returns.",
+     "missing": 0,
+     "missing_pct": 0.0,
+     "distinct": 32117,
+     "example": "540.08",
+     "stats": {
+      "min": 4.09,
+      "p25": 63.64,
+      "median": 170.5,
+      "mean": 293.5,
+      "p75": 392.7,
+      "max": 3937.0,
+      "std": 351.9,
+      "skew": 2.557
+     },
+     "histogram": [
+      {
+       "start": 4.09,
+       "end": 200.7,
+       "count": 28453
+      },
+      {
+       "start": 200.7,
+       "end": 397.4,
+       "count": 9261
+      },
+      {
+       "start": 397.4,
+       "end": 594.0,
+       "count": 4958
+      },
+      {
+       "start": 594.0,
+       "end": 790.7,
+       "count": 3060
+      },
+      {
+       "start": 790.7,
+       "end": 987.4,
+       "count": 1988
+      },
+      {
+       "start": 987.4,
+       "end": 1184.0,
+       "count": 891
+      },
+      {
+       "start": 1184.0,
+       "end": 1381.0,
+       "count": 433
+      },
+      {
+       "start": 1381.0,
+       "end": 1577.0,
+       "count": 324
+      },
+      {
+       "start": 1577.0,
+       "end": 1774.0,
+       "count": 272
+      },
+      {
+       "start": 1774.0,
+       "end": 1971.0,
+       "count": 116
+      },
+      {
+       "start": 1971.0,
+       "end": 2167.0,
+       "count": 77
+      },
+      {
+       "start": 2167.0,
+       "end": 2364.0,
+       "count": 70
+      },
+      {
+       "start": 2364.0,
+       "end": 2561.0,
+       "count": 55
+      },
+      {
+       "start": 2561.0,
+       "end": 2757.0,
+       "count": 29
+      },
+      {
+       "start": 2757.0,
+       "end": 2954.0,
+       "count": 17
+      },
+      {
+       "start": 2954.0,
+       "end": 3151.0,
+       "count": 6
+      },
+      {
+       "start": 3151.0,
+       "end": 3347.0,
+       "count": 3
+      },
+      {
+       "start": 3347.0,
+       "end": 3544.0,
+       "count": 3
+      },
+      {
+       "start": 3544.0,
+       "end": 3740.0,
+       "count": 4
+      },
+      {
+       "start": 3740.0,
+       "end": 3937.0,
+       "count": 1
+      }
+     ],
+     "outliers": {
+      "method": "iqr",
+      "lower": -430.0,
+      "upper": 886.4,
+      "count": 2985,
+      "pct": 5.97,
+      "examples": [
+       3937.0,
+       3666.0,
+       3617.0,
+       3582.0,
+       3582.0
+      ]
+     }
+    }
+   ],
+   "correlations": null
+  },
+  {
+   "name": "payments",
+   "description": "",
+   "rows": 48806,
+   "columns": [
+    {
+     "name": "payment_id",
+     "type": "integer",
+     "kind": "id",
+     "note": "",
+     "missing": 0,
+     "missing_pct": 0.0,
+     "distinct": 48806,
+     "example": "1"
+    },
+    {
+     "name": "order_id",
+     "type": "integer",
+     "kind": "id",
+     "note": "",
+     "missing": 0,
+     "missing_pct": 0.0,
+     "distinct": 48801,
+     "example": "1"
+    },
+    {
+     "name": "amount",
+     "type": "numeric(12,2)",
+     "kind": "numeric",
+     "note": "",
+     "missing": 0,
+     "missing_pct": 0.0,
+     "distinct": 31605,
+     "example": "540.08",
+     "stats": {
+      "min": 4.09,
+      "p25": 63.68,
+      "median": 170.6,
+      "mean": 294.1,
+      "p75": 393.5,
+      "max": 3937.0,
+      "std": 352.5,
+      "skew": 2.557
+     },
+     "histogram": [
+      {
+       "start": 4.09,
+       "end": 200.7,
+       "count": 27739
+      },
+      {
+       "start": 200.7,
+       "end": 397.4,
+       "count": 9029
+      },
+      {
+       "start": 397.4,
+       "end": 594.0,
+       "count": 4844
+      },
+      {
+       "start": 594.0,
+       "end": 790.7,
+       "count": 2990
+      },
+      {
+       "start": 790.7,
+       "end": 987.4,
+       "count": 1945
+      },
+      {
+       "start": 987.4,
+       "end": 1184.0,
+       "count": 876
+      },
+      {
+       "start": 1184.0,
+       "end": 1381.0,
+       "count": 426
+      },
+      {
+       "start": 1381.0,
+       "end": 1577.0,
+       "count": 317
+      },
+      {
+       "start": 1577.0,
+       "end": 1774.0,
+       "count": 268
+      },
+      {
+       "start": 1774.0,
+       "end": 1971.0,
+       "count": 112
+      },
+      {
+       "start": 1971.0,
+       "end": 2167.0,
+       "count": 75
+      },
+      {
+       "start": 2167.0,
+       "end": 2364.0,
+       "count": 68
+      },
+      {
+       "start": 2364.0,
+       "end": 2561.0,
+       "count": 54
+      },
+      {
+       "start": 2561.0,
+       "end": 2757.0,
+       "count": 29
+      },
+      {
+       "start": 2757.0,
+       "end": 2954.0,
+       "count": 17
+      },
+      {
+       "start": 2954.0,
+       "end": 3151.0,
+       "count": 6
+      },
+      {
+       "start": 3151.0,
+       "end": 3347.0,
+       "count": 3
+      },
+      {
+       "start": 3347.0,
+       "end": 3544.0,
+       "count": 3
+      },
+      {
+       "start": 3544.0,
+       "end": 3740.0,
+       "count": 4
+      },
+      {
+       "start": 3740.0,
+       "end": 3937.0,
+       "count": 1
+      }
+     ],
+     "outliers": {
+      "method": "iqr",
+      "lower": -431.0,
+      "upper": 888.1,
+      "count": 2920,
+      "pct": 5.98,
+      "examples": [
+       3937.0,
+       3666.0,
+       3617.0,
+       3582.0,
+       3582.0
+      ]
+     }
+    },
+    {
+     "name": "method",
+     "type": "text",
+     "kind": "categorical",
+     "note": "",
+     "missing": 0,
+     "missing_pct": 0.0,
+     "distinct": 4,
+     "example": "wallet",
+     "top_values": [
+      {
+       "value": "card",
+       "count": 26936,
+       "pct": 55.2
+      },
+      {
+       "value": "paypal",
+       "count": 9754,
+       "pct": 20.0
+      },
+      {
+       "value": "wallet",
+       "count": 7363,
+       "pct": 15.1
+      },
+      {
+       "value": "bank_transfer",
+       "count": 4753,
+       "pct": 9.74
+      }
+     ]
+    },
+    {
+     "name": "status",
+     "type": "text",
+     "kind": "categorical",
+     "note": "captured | failed. Only captured payments are money received.",
+     "missing": 0,
+     "missing_pct": 0.0,
+     "distinct": 2,
+     "example": "captured",
+     "top_values": [
+      {
+       "value": "captured",
+       "count": 48016,
+       "pct": 98.4
+      },
+      {
+       "value": "failed",
+       "count": 790,
+       "pct": 1.62
+      }
+     ]
+    },
+    {
+     "name": "paid_at",
+     "type": "timestamp without time zone",
+     "kind": "datetime",
+     "note": "",
+     "missing": 0,
+     "missing_pct": 0.0,
+     "distinct": 48784,
+     "example": "2024-01-01T22:06:14",
+     "date_range": {
+      "min": "2024-01-01T00:17:25",
+      "max": "2025-12-31T23:42:46"
+     },
+     "timeline": {
+      "unit": "month",
+      "points": [
+       {
+        "period": "2024-01",
+        "count": 1223
+       },
+       {
+        "period": "2024-02",
+        "count": 1417
+       },
+       {
+        "period": "2024-03",
+        "count": 1473
+       },
+       {
+        "period": "2024-04",
+        "count": 1548
+       },
+       {
+        "period": "2024-05",
+        "count": 1569
+       },
+       {
+        "period": "2024-06",
+        "count": 1616
+       },
+       {
+        "period": "2024-07",
+        "count": 1679
+       },
+       {
+        "period": "2024-08",
+        "count": 1731
+       },
+       {
+        "period": "2024-09",
+        "count": 1732
+       },
+       {
+        "period": "2024-10",
+        "count": 1855
+       },
+       {
+        "period": "2024-11",
+        "count": 2964
+       },
+       {
+        "period": "2024-12",
+        "count": 2747
+       },
+       {
+        "period": "2025-01",
+        "count": 1706
+       },
+       {
+        "period": "2025-02",
+        "count": 1754
+       },
+       {
+        "period": "2025-03",
+        "count": 1534
+       },
+       {
+        "period": "2025-04",
+        "count": 2047
+       },
+       {
+        "period": "2025-05",
+        "count": 2144
+       },
+       {
+        "period": "2025-06",
+        "count": 2022
+       },
+       {
+        "period": "2025-07",
+        "count": 2271
+       },
+       {
+        "period": "2025-08",
+        "count": 2258
+       },
+       {
+        "period": "2025-09",
+        "count": 2157
+       },
+       {
+        "period": "2025-10",
+        "count": 2361
+       },
+       {
+        "period": "2025-11",
+        "count": 3679
+       },
+       {
+        "period": "2025-12",
+        "count": 3319
+       }
+      ]
+     }
+    }
+   ],
+   "correlations": null
+  },
+  {
+   "name": "products",
+   "description": "",
+   "rows": 120,
+   "columns": [
+    {
+     "name": "product_id",
+     "type": "integer",
+     "kind": "id",
+     "note": "",
+     "missing": 0,
+     "missing_pct": 0.0,
+     "distinct": 120,
+     "example": "1"
+    },
+    {
+     "name": "product_name",
+     "type": "text",
+     "kind": "text",
+     "note": "",
+     "missing": 0,
+     "missing_pct": 0.0,
+     "distinct": 120,
+     "example": "Pro Headphones",
+     "length": {
+      "min": 7,
+      "mean": 15.9,
+      "max": 25
+     }
+    },
+    {
+     "name": "category",
+     "type": "text",
+     "kind": "categorical",
+     "note": "",
+     "missing": 0,
+     "missing_pct": 0.0,
+     "distinct": 8,
+     "example": "Electronics",
+     "top_values": [
+      {
+       "value": "Electronics",
+       "count": 15,
+       "pct": 12.5
+      },
+      {
+       "value": "Home & Kitchen",
+       "count": 15,
+       "pct": 12.5
+      },
+      {
+       "value": "Apparel",
+       "count": 15,
+       "pct": 12.5
+      },
+      {
+       "value": "Footwear",
+       "count": 15,
+       "pct": 12.5
+      },
+      {
+       "value": "Beauty",
+       "count": 15,
+       "pct": 12.5
+      },
+      {
+       "value": "Sports & Outdoors",
+       "count": 15,
+       "pct": 12.5
+      },
+      {
+       "value": "Books",
+       "count": 15,
+       "pct": 12.5
+      },
+      {
+       "value": "Toys",
+       "count": 15,
+       "pct": 12.5
+      }
+     ]
+    },
+    {
+     "name": "price_usd",
+     "type": "numeric(10,2)",
+     "kind": "numeric",
+     "note": "",
+     "missing": 0,
+     "missing_pct": 0.0,
+     "distinct": 120,
+     "example": "552.79",
+     "stats": {
+      "min": 6.13,
+      "p25": 34.51,
+      "median": 66.99,
+      "mean": 131.8,
+      "p75": 164.8,
+      "max": 843.1,
+      "std": 162.9,
+      "skew": 2.353
+     },
+     "histogram": [
+      {
+       "start": 6.13,
+       "end": 47.98,
+       "count": 39
+      },
+      {
+       "start": 47.98,
+       "end": 89.83,
+       "count": 33
+      },
+      {
+       "start": 89.83,
+       "end": 131.7,
+       "count": 13
+      },
+      {
+       "start": 131.7,
+       "end": 173.5,
+       "count": 8
+      },
+      {
+       "start": 173.5,
+       "end": 215.4,
+       "count": 8
+      },
+      {
+       "start": 215.4,
+       "end": 257.2,
+       "count": 2
+      },
+      {
+       "start": 257.2,
+       "end": 299.1,
+       "count": 5
+      },
+      {
+       "start": 299.1,
+       "end": 340.9,
+       "count": 1
+      },
+      {
+       "start": 340.9,
+       "end": 382.8,
+       "count": 0
+      },
+      {
+       "start": 382.8,
+       "end": 424.6,
+       "count": 2
+      },
+      {
+       "start": 424.6,
+       "end": 466.5,
+       "count": 0
+      },
+      {
+       "start": 466.5,
+       "end": 508.3,
+       "count": 1
+      },
+      {
+       "start": 508.3,
+       "end": 550.2,
+       "count": 1
+      },
+      {
+       "start": 550.2,
+       "end": 592.0,
+       "count": 4
+      },
+      {
+       "start": 592.0,
+       "end": 633.9,
+       "count": 0
+      },
+      {
+       "start": 633.9,
+       "end": 675.7,
+       "count": 1
+      },
+      {
+       "start": 675.7,
+       "end": 717.6,
+       "count": 0
+      },
+      {
+       "start": 717.6,
+       "end": 759.4,
+       "count": 1
+      },
+      {
+       "start": 759.4,
+       "end": 801.3,
+       "count": 0
+      },
+      {
+       "start": 801.3,
+       "end": 843.1,
+       "count": 1
+      }
+     ],
+     "outliers": {
+      "method": "iqr",
+      "lower": -161.0,
+      "upper": 360.3,
+      "count": 11,
+      "pct": 9.17,
+      "examples": [
+       843.1,
+       753.3,
+       642.5,
+       589.2,
+       585.0
+      ]
+     }
+    },
+    {
+     "name": "cost_usd",
+     "type": "numeric(10,2)",
+     "kind": "numeric",
+     "note": "Unit cost in USD; NULL when unknown.",
+     "missing": 15,
+     "missing_pct": 12.5,
+     "distinct": 104,
+     "example": "348.32",
+     "stats": {
+      "min": 4.45,
+      "p25": 23.15,
+      "median": 40.16,
+      "mean": 75.42,
+      "p75": 82.27,
+      "max": 624.1,
+      "std": 104.5,
+      "skew": 3.057
+     },
+     "histogram": [
+      {
+       "start": 4.45,
+       "end": 35.43,
+       "count": 48
+      },
+      {
+       "start": 35.43,
+       "end": 66.42,
+       "count": 25
+      },
+      {
+       "start": 66.42,
+       "end": 97.4,
+       "count": 9
+      },
+      {
+       "start": 97.4,
+       "end": 128.4,
+       "count": 10
+      },
+      {
+       "start": 128.4,
+       "end": 159.4,
+       "count": 3
+      },
+      {
+       "start": 159.4,
+       "end": 190.4,
+       "count": 1
+      },
+      {
+       "start": 190.4,
+       "end": 221.3,
+       "count": 0
+      },
+      {
+       "start": 221.3,
+       "end": 252.3,
+       "count": 0
+      },
+      {
+       "start": 252.3,
+       "end": 283.3,
+       "count": 3
+      },
+      {
+       "start": 283.3,
+       "end": 314.3,
+       "count": 1
+      },
+      {
+       "start": 314.3,
+       "end": 345.3,
+       "count": 0
+      },
+      {
+       "start": 345.3,
+       "end": 376.3,
+       "count": 1
+      },
+      {
+       "start": 376.3,
+       "end": 407.3,
+       "count": 1
+      },
+      {
+       "start": 407.3,
+       "end": 438.2,
+       "count": 1
+      },
+      {
+       "start": 438.2,
+       "end": 469.2,
+       "count": 0
+      },
+      {
+       "start": 469.2,
+       "end": 500.2,
+       "count": 1
+      },
+      {
+       "start": 500.2,
+       "end": 531.2,
+       "count": 0
+      },
+      {
+       "start": 531.2,
+       "end": 562.2,
+       "count": 0
+      },
+      {
+       "start": 562.2,
+       "end": 593.2,
+       "count": 0
+      },
+      {
+       "start": 593.2,
+       "end": 624.1,
+       "count": 1
+      }
+     ],
+     "outliers": {
+      "method": "iqr",
+      "lower": -65.53,
+      "upper": 170.9,
+      "count": 10,
+      "pct": 9.52,
+      "examples": [
+       624.1,
+       491.9,
+       410.0,
+       404.7,
+       348.3
+      ]
+     }
+    }
+   ],
+   "correlations": {
+    "method": "spearman",
+    "columns": [
+     "price_usd",
+     "cost_usd"
+    ],
+    "matrix": [
+     [
+      1.0,
+      0.986
+     ],
+     [
+      0.986,
+      1.0
+     ]
+    ]
+   }
+  },
+  {
+   "name": "regions",
+   "description": "",
+   "rows": 5,
+   "columns": [
+    {
+     "name": "region_id",
+     "type": "smallint",
+     "kind": "id",
+     "note": "",
+     "missing": 0,
+     "missing_pct": 0.0,
+     "distinct": 5,
+     "example": "1",
+     "top_values": [
+      {
+       "value": "1",
+       "count": 1,
+       "pct": 20.0
+      },
+      {
+       "value": "2",
+       "count": 1,
+       "pct": 20.0
+      },
+      {
+       "value": "3",
+       "count": 1,
+       "pct": 20.0
+      },
+      {
+       "value": "4",
+       "count": 1,
+       "pct": 20.0
+      },
+      {
+       "value": "5",
+       "count": 1,
+       "pct": 20.0
+      }
+     ]
+    },
+    {
+     "name": "region_name",
+     "type": "text",
+     "kind": "categorical",
+     "note": "",
+     "missing": 0,
+     "missing_pct": 0.0,
+     "distinct": 5,
+     "example": "North",
+     "top_values": [
+      {
+       "value": "North",
+       "count": 1,
+       "pct": 20.0
+      },
+      {
+       "value": "South",
+       "count": 1,
+       "pct": 20.0
+      },
+      {
+       "value": "East",
+       "count": 1,
+       "pct": 20.0
+      },
+      {
+       "value": "West",
+       "count": 1,
+       "pct": 20.0
+      },
+      {
+       "value": "Central",
+       "count": 1,
+       "pct": 20.0
+      }
+     ]
+    }
+   ],
+   "correlations": null
+  },
+  {
+   "name": "reviews",
+   "description": "",
+   "rows": 23088,
+   "columns": [
+    {
+     "name": "review_id",
+     "type": "integer",
+     "kind": "id",
+     "note": "",
+     "missing": 0,
+     "missing_pct": 0.0,
+     "distinct": 23088,
+     "example": "1"
+    },
+    {
+     "name": "product_id",
+     "type": "integer",
+     "kind": "id",
+     "note": "",
+     "missing": 0,
+     "missing_pct": 0.0,
+     "distinct": 120,
+     "example": "85"
+    },
+    {
+     "name": "customer_id",
+     "type": "integer",
+     "kind": "id",
+     "note": "",
+     "missing": 0,
+     "missing_pct": 0.0,
+     "distinct": 4278,
+     "example": "26"
+    },
+    {
+     "name": "rating",
+     "type": "smallint",
+     "kind": "numeric",
+     "note": "1-5; may be NULL.",
+     "missing": 25,
+     "missing_pct": 0.108,
+     "distinct": 5,
+     "example": "3.0",
+     "stats": {
+      "min": 1.0,
+      "p25": 3.0,
+      "median": 4.0,
+      "mean": 4.003,
+      "p75": 5.0,
+      "max": 5.0,
+      "std": 1.181,
+      "skew": -1.134
+     },
+     "histogram": [
+      {
+       "start": 1.0,
+       "end": 1.0,
+       "count": 1387
+      },
+      {
+       "start": 2.0,
+       "end": 2.0,
+       "count": 1601
+      },
+      {
+       "start": 3.0,
+       "end": 3.0,
+       "count": 2932
+      },
+      {
+       "start": 4.0,
+       "end": 4.0,
+       "count": 6786
+      },
+      {
+       "start": 5.0,
+       "end": 5.0,
+       "count": 10357
+      }
+     ],
+     "outliers": {
+      "method": "iqr",
+      "lower": 0.0,
+      "upper": 8.0,
+      "count": 0,
+      "pct": 0.0,
+      "examples": []
+     }
+    },
+    {
+     "name": "review_text",
+     "type": "text",
+     "kind": "categorical",
+     "note": "Free text written by customers: untrusted content.",
+     "missing": 0,
+     "missing_pct": 0.0,
+     "distinct": 20,
+     "example": "Average quality, nothing special.",
+     "top_values": [
+      {
+       "value": "Better than I expected.",
+       "count": 3546,
+       "pct": 15.4
+      },
+      {
+       "value": "Works great, exactly as described.",
+       "count": 3460,
+       "pct": 15.0
+      },
+      {
+       "value": "Arrived fast and I love it.",
+       "count": 3391,
+       "pct": 14.7
+      },
+      {
+       "value": "Excellent quality for the price.",
+       "count": 3383,
+       "pct": 14.7
+      },
+      {
+       "value": "Would buy again, highly recommend.",
+       "count": 3377,
+       "pct": 14.6
+      },
+      {
+       "value": "It is okay, does the job.",
+       "count": 747,
+       "pct": 3.24
+      },
+      {
+       "value": "Fine for the price, packaging was damaged.",
+       "count": 737,
+       "pct": 3.19
+      },
+      {
+       "value": "Decent but a bit overpriced.",
+       "count": 735,
+       "pct": 3.18
+      },
+      {
+       "value": "Average quality, nothing special.",
+       "count": 714,
+       "pct": 3.09
+      },
+      {
+       "value": "Sizing runs small and the finish feels cheap.",
+       "count": 610,
+       "pct": 2.64
+      },
+      {
+       "value": null,
+       "other": true,
+       "count": 2388,
+       "pct": 10.3
+      }
+     ]
+    },
+    {
+     "name": "created_at",
+     "type": "timestamp without time zone",
+     "kind": "datetime",
+     "note": "",
+     "missing": 0,
+     "missing_pct": 0.0,
+     "distinct": 22189,
+     "example": "2024-01-16T22:04:40",
+     "date_range": {
+      "min": "2024-01-06T00:14:11",
+      "max": "2025-12-31T23:59:59"
+     },
+     "timeline": {
+      "unit": "month",
+      "points": [
+       {
+        "period": "2024-01",
+        "count": 268
+       },
+       {
+        "period": "2024-02",
+        "count": 597
+       },
+       {
+        "period": "2024-03",
+        "count": 669
+       },
+       {
+        "period": "2024-04",
+        "count": 700
+       },
+       {
+        "period": "2024-05",
+        "count": 727
+       },
+       {
+        "period": "2024-06",
+        "count": 771
+       },
+       {
+        "period": "2024-07",
+        "count": 811
+       },
+       {
+        "period": "2024-08",
+        "count": 793
+       },
+       {
+        "period": "2024-09",
+        "count": 823
+       },
+       {
+        "period": "2024-10",
+        "count": 899
+       },
+       {
+        "period": "2024-11",
+        "count": 995
+       },
+       {
+        "period": "2024-12",
+        "count": 1506
+       },
+       {
+        "period": "2025-01",
+        "count": 1029
+       },
+       {
+        "period": "2025-02",
+        "count": 767
+       },
+       {
+        "period": "2025-03",
+        "count": 792
+       },
+       {
+        "period": "2025-04",
+        "count": 813
+       },
+       {
+        "period": "2025-05",
+        "count": 992
+       },
+       {
+        "period": "2025-06",
+        "count": 909
+       },
+       {
+        "period": "2025-07",
+        "count": 1078
+       },
+       {
+        "period": "2025-08",
+        "count": 1069
+       },
+       {
+        "period": "2025-09",
+        "count": 1058
+       },
+       {
+        "period": "2025-10",
+        "count": 1095
+       },
+       {
+        "period": "2025-11",
+        "count": 1292
+       },
+       {
+        "period": "2025-12",
+        "count": 2635
+       }
+      ]
+     }
+    }
+   ],
+   "correlations": null
+  }
+ ],
+ "relationships": [
+  {
+   "from_table": "customers",
+   "from_column": "acquisition_campaign_id",
+   "to_table": "marketing_campaigns",
+   "to_column": "campaign_id",
+   "kind": "foreign_key"
+  },
+  {
+   "from_table": "customers",
+   "from_column": "region_id",
+   "to_table": "regions",
+   "to_column": "region_id",
+   "kind": "foreign_key"
+  },
+  {
+   "from_table": "order_items",
+   "from_column": "order_id",
+   "to_table": "orders",
+   "to_column": "order_id",
+   "kind": "foreign_key"
+  },
+  {
+   "from_table": "order_items",
+   "from_column": "product_id",
+   "to_table": "products",
+   "to_column": "product_id",
+   "kind": "foreign_key"
+  },
+  {
+   "from_table": "orders",
+   "from_column": "customer_id",
+   "to_table": "customers",
+   "to_column": "customer_id",
+   "kind": "foreign_key"
+  },
+  {
+   "from_table": "orders",
+   "from_column": "region_id",
+   "to_table": "regions",
+   "to_column": "region_id",
+   "kind": "foreign_key"
+  },
+  {
+   "from_table": "payments",
+   "from_column": "order_id",
+   "to_table": "orders",
+   "to_column": "order_id",
+   "kind": "foreign_key"
+  },
+  {
+   "from_table": "reviews",
+   "from_column": "customer_id",
+   "to_table": "customers",
+   "to_column": "customer_id",
+   "kind": "foreign_key"
+  },
+  {
+   "from_table": "reviews",
+   "from_column": "product_id",
+   "to_table": "products",
+   "to_column": "product_id",
+   "kind": "foreign_key"
+  }
+ ],
+ "feature_importance": {
+  "table": "order lines (order_items joined with products, orders, regions, customers)",
+  "target": "is_returned",
+  "task": "classification",
+  "method": "mutual_information",
+  "description": "Which properties of an order line tell you most about whether it is returned.",
+  "rows_used": 50000,
+  "scores": [
+   {
+    "feature": "category",
+    "score": 0.0432
+   },
+   {
+    "feature": "unit_price",
+    "score": 0.0219
+   },
+   {
+    "feature": "quantity",
+    "score": 0.00632
+   },
+   {
+    "feature": "status",
+    "score": 0.00376
+   },
+   {
+    "feature": "discount_pct",
+    "score": 0.00105
+   },
+   {
+    "feature": "order_date (month)",
+    "score": 0.000101
+   },
+   {
+    "feature": "region_name",
+    "score": 1.17e-05
+   },
+   {
+    "feature": "segment",
+    "score": 1e-05
+   }
+  ]
+ }
+}

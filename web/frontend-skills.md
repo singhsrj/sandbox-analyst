@@ -20,6 +20,9 @@ Next.js 16, and its APIs differ from older versions (see `AGENTS.md`).
 | Markdown | `streamdown` (no raw HTML) | `dangerouslySetInnerHTML` |
 | Icons | `lucide-react`, named `XxxIcon` imports | Other icon sets, emoji as icons |
 | Accounts | Clerk (`@clerk/nextjs`): modal `SignInButton`, `UserButton`, `useAuth` | Own sign-in pages, reading Clerk tokens in components |
+| Charts | shadcn `chart` (Recharts) with `var(--chart-*)` colours; plain HTML bars for ranked lists | Other chart libraries, hard-coded colours |
+| Split panes | shadcn `resizable` (`react-resizable-panels`) | Hand-rolled drag handles |
+| Diagrams | Our own inline SVG with token classes (`fill-card`, `stroke-border`) | Mermaid or other diagram renderers |
 | Class merging | `cn()` from `@/lib/utils` | String concatenation for conditional classes |
 
 | Path | What belongs there |
@@ -112,8 +115,11 @@ Keep line length readable: prose `max-w-[58ch]`, the conversation column `max-w-
 
 ## 5. Layout and spacing
 
-- **App shell:** `flex h-dvh w-full overflow-hidden`; sidebar `w-72 shrink-0 border-r` from `md:`
-  up; below `md` the sidebar is a drawer (`fixed inset-0 z-40`, `role="dialog" aria-modal="true"`,
+- **App shell:** `flex h-dvh w-full overflow-hidden`. From `md:` up it is one resizable group:
+  sidebar | data profile (when open) | chat, each divider draggable, widths remembered per browser
+  (`lib/panel-layout.ts`) and drawn only after hydration. The profile is full screen below `md`. Choose
+  the layout with `useMediaQuery`, never by hiding a second copy with CSS (it would mount the chat
+  twice). Below `md` the sidebar is a drawer (`fixed inset-0 z-40`, `role="dialog" aria-modal="true"`,
   panel `w-[85%] max-w-xs shadow-lg`, backdrop button that closes it).
 - **Content column:** `mx-auto w-full max-w-[46rem] px-5`, vertical rhythm `py-8 md:py-12`.
 - **Landing page:** sections are `border-t`, content `mx-auto max-w-6xl px-5 py-16 md:py-24`, anchors
@@ -142,6 +148,7 @@ Keep line length readable: prose `max-w-[58ch]`, the conversation column `max-w-
 | Bordered list | `divide-y border-y`, rows `px-1 py-3 hover:bg-muted/60` | Example questions |
 | Card needing attention | `grid gap-3 rounded-sm border border-foreground/40 bg-card p-3` | `approval-card.tsx` |
 | Tabs | `role="tablist"`, buttons `-mb-px border-b-2 py-2 text-sm`, active `border-foreground font-medium`, inactive `border-transparent text-muted-foreground hover:text-foreground` | `sidebar.tsx` |
+| Side panel | `section` with a header (`h2` + meta line) and an `icon-sm` ghost close button labelled "Close …"; its own scroll area; jump links scroll that area, not the page (`scrollIntoView` would move the whole app) | `data-profile-panel.tsx` |
 | Row actions | `group relative` row; action `opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100` | Thread delete button |
 
 New visual states go into `globals.css` as `data-state` variants of an existing class, not as one-off
@@ -178,6 +185,7 @@ utility soup in a component.
   Clerk's sign-in when signed out or expired, and with the access-code dialog otherwise.
 - Public parts (landing page, recorded runs, schema) must never wait for Clerk to load.
 - Never add sign-in pages or routes of our own; use `SignInButton mode="modal"` / `openSignIn()`.
+- Tests: `react-resizable-panels` is replaced globally by `src/test-utils/resizable-mock.tsx` (jsdom has no layout, so the real library treats every click as a divider drag); check layout in `e2e/profile.mjs`.
 - Tests: `@clerk/nextjs` is replaced globally by `src/test-utils/clerk-mock.tsx`; drive it with
   `clerk.signIn()`, `clerk.autoSignIn = false`, `clerk.setLoaded(false)`.
 
