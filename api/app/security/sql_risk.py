@@ -24,6 +24,8 @@ import sqlglot
 from sqlglot import exp
 from sqlglot.errors import SqlglotError
 
+from app.security.sql_validator import ANALYTICS_SCHEMA
+
 # Tables bigger than the default 10,000-row result cap (counts: docs/dataset.md, M1 seed).
 LARGE_TABLES = frozenset({"order_items", "orders", "payments", "reviews"})
 
@@ -61,11 +63,20 @@ def _outer_select(tree: exp.Expr) -> exp.Select | None:
     return None  # UNION / INTERSECT / EXCEPT: judged by their parts' joins only
 
 
-def assess_query(sql: str) -> RiskAssessment:
+def assess_query(
+    sql: str,
+    *,
+    large_tables: frozenset[str] = LARGE_TABLES,
+    schema: str = ANALYTICS_SCHEMA,
+    dialect: str = "postgres",
+) -> RiskAssessment:
     """Flag queries that deserve approval. Unparseable SQL is not flagged: the validator
-    rejects it anyway and the model gets that error instead of a pointless approval card."""
+    rejects it anyway and the model gets that error instead of a pointless approval card.
+
+    `large_tables` are the tables bigger than the row cap; the defaults describe the sample data.
+    """
     try:
-        statements = [s for s in sqlglot.parse(sql, read="postgres") if s is not None]
+        statements = [s for s in sqlglot.parse(sql, read=dialect) if s is not None]
     except SqlglotError:
         return RiskAssessment(False)
     if len(statements) != 1:
@@ -78,9 +89,9 @@ def assess_query(sql: str) -> RiskAssessment:
         if join.args.get("on") is not None or join.args.get("using"):
             continue
         name = _table_name(join.this)
-        if name and name not in ctes and name in LARGE_TABLES:
+        if name and name not in ctes and name in large_tables:
             reasons.append(
-                f"joins analytics.{name} without a join condition (cartesian product: the row "
+                f"joins {schema}.{name} without a join condition (cartesian product: the row "
                 "count multiplies)"
             )
 
@@ -92,13 +103,13 @@ def assess_query(sql: str) -> RiskAssessment:
         if (
             name
             and name not in ctes
-            and name in LARGE_TABLES
+            and name in large_tables
             and select.args.get("where") is None
             and limit is None
             and not _is_aggregated(select)
         ):
             reasons.append(
-                f"returns raw rows of analytics.{name} with no filter, aggregation or LIMIT (the "
+                f"returns raw rows of {schema}.{name} with no filter, aggregation or LIMIT (the "
                 "result will hit the row cap and be incomplete)"
             )
 

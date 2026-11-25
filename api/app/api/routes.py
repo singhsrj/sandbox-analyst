@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import json
 import mimetypes
-import time
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -36,7 +35,7 @@ from app.agent.approvals import MAX_REASON_CHARS, ApprovalAnswer, ApprovalMismat
 from app.api.deps import LiveSessionDep, ServicesDep, SessionDep, client_ip
 from app.artifacts import artifact_path
 from app.auth import code_is_valid
-from app.db.analyst import fetch_catalog
+from app.datasources import SampleSource
 from app.db.app_store import ThreadNotFound
 from app.ratelimit import RateLimiter
 from app.security.sql_validator import MAX_SQL_CHARS
@@ -142,50 +141,24 @@ async def examples() -> dict[str, list[str]]:
     return {"questions": EXAMPLE_QUESTIONS}
 
 
-_schema_cache: dict[str, Any] = {"at": 0.0, "value": None}
-
-
 @router.get("/schema")
 async def schema(services: ServicesDep) -> dict[str, Any]:
-    """Tables, columns and business notes of the analytics schema (cached for 5 minutes)."""
-    if _schema_cache["value"] is not None and time.monotonic() - _schema_cache["at"] < 300:
-        cached: dict[str, Any] = _schema_cache["value"]
-        return cached
-    settings = services.settings
-    tables = await fetch_catalog(
-        settings,
-        "SELECT c.relname, GREATEST(c.reltuples, 0)::bigint, "
-        "coalesce(obj_description(c.oid, 'pg_class'), '') "
-        "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
-        "WHERE n.nspname = 'analytics' AND c.relkind = 'r' ORDER BY c.relname",
-    )
-    columns = await fetch_catalog(
-        settings,
-        "SELECT c.relname, a.attname, format_type(a.atttypid, a.atttypmod), NOT a.attnotnull, "
-        "coalesce(col_description(a.attrelid, a.attnum), '') "
-        "FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid "
-        "JOIN pg_namespace n ON n.oid = c.relnamespace "
-        "WHERE n.nspname = 'analytics' AND c.relkind = 'r' AND a.attnum > 0 "
-        "AND NOT a.attisdropped ORDER BY c.relname, a.attnum",
-    )
-    by_table: dict[str, list[dict[str, Any]]] = {}
-    for table, name, type_, nullable, note in columns:
-        by_table.setdefault(table, []).append(
-            {"name": name, "type": type_, "nullable": bool(nullable), "note": note}
-        )
-    value = {
+    """Tables, columns and business notes of the sample data (its catalog is cached 5 minutes)."""
+    catalog = await SampleSource(services.settings).catalog()
+    return {
         "tables": [
             {
-                "name": name,
-                "approx_rows": int(rows),
-                "description": desc,
-                "columns": by_table.get(name, []),
+                "name": t.name,
+                "approx_rows": t.approx_rows,
+                "description": t.description,
+                "columns": [
+                    {"name": c.name, "type": c.type, "nullable": c.nullable, "note": c.note}
+                    for c in t.columns
+                ],
             }
-            for name, rows, desc in tables
+            for t in catalog.tables
         ]
     }
-    _schema_cache.update(at=time.monotonic(), value=value)
-    return value
 
 
 _PROFILE_IDS = frozenset({"sample"})  # uploads get their own profiles in a later change

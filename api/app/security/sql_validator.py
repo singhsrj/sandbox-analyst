@@ -7,8 +7,9 @@ tricks and odd formatting do not matter:
   * exactly one statement, and it must be a query (SELECT / UNION / INTERSECT / EXCEPT, with CTEs)
   * no DML/DDL/COPY/SET/etc. anywhere in the tree (this also catches data-modifying CTEs)
   * no SELECT ... INTO, no row locks (FOR UPDATE / FOR SHARE)
-  * every table must be one of the known `analytics` tables (or a CTE defined in the query);
-    system catalogs, `information_schema`, other schemas and table functions are rejected
+  * every table must be one of the tables in scope (or a CTE defined in the query); system
+    catalogs, `information_schema`, other schemas and table functions are rejected. The scope is
+    the sample's `analytics` tables by default; another data source passes its own
   * function calls must be known to sqlglot or on a small allowlist; unknown ones such as
     pg_sleep, pg_read_file or dblink are rejected
 
@@ -39,6 +40,9 @@ ANALYTICS_TABLES = frozenset(
 )
 
 MAX_SQL_CHARS = 20_000
+
+# How error messages name a sqlglot dialect.
+_DIALECT_NAMES = {"postgres": "PostgreSQL", "mysql": "MySQL", "tsql": "SQL Server"}
 
 _ALLOWED_ROOTS = (exp.Select, exp.Union, exp.Intersect, exp.Except)
 
@@ -134,9 +138,21 @@ class SqlValidationError(ValueError):
 
 
 @dataclass(frozen=True)
+class ValidationScope:
+    """What a query may reference: one schema, an allowlist of its tables, and the SQL dialect."""
+
+    schema: str
+    tables: frozenset[str]
+    dialect: str = "postgres"
+
+
+SAMPLE_SCOPE = ValidationScope(schema=ANALYTICS_SCHEMA, tables=ANALYTICS_TABLES)
+
+
+@dataclass(frozen=True)
 class ValidatedQuery:
     sql: str
-    tables: frozenset[str] = field(default_factory=frozenset)  # analytics tables referenced
+    tables: frozenset[str] = field(default_factory=frozenset)  # in-scope tables referenced
 
 
 def _ident(node: exp.Expression | None) -> str:
@@ -170,7 +186,7 @@ def _visible_ctes(table: exp.Table) -> set[str]:
     return visible
 
 
-def validate_select(sql: str) -> ValidatedQuery:
+def validate_select(sql: str, scope: ValidationScope = SAMPLE_SCOPE) -> ValidatedQuery:
     """Return the validated query, or raise `SqlValidationError` with a fixable message."""
     if not isinstance(sql, str) or not sql.strip():
         raise SqlValidationError("The query is empty. Provide a single SELECT statement.")
@@ -180,10 +196,11 @@ def validate_select(sql: str) -> ValidatedQuery:
         raise SqlValidationError(f"The query is too long (max {MAX_SQL_CHARS} characters).")
 
     try:
-        statements = [s for s in sqlglot.parse(sql, read="postgres") if s is not None]
+        statements = [s for s in sqlglot.parse(sql, read=scope.dialect) if s is not None]
     except SqlglotError as exc:
+        dialect = _DIALECT_NAMES.get(scope.dialect, scope.dialect)
         raise SqlValidationError(
-            f"The query could not be parsed as PostgreSQL: {str(exc).splitlines()[0][:200]}"
+            f"The query could not be parsed as {dialect}: {str(exc).splitlines()[0][:200]}"
         ) from exc
 
     if len(statements) != 1:
@@ -224,15 +241,15 @@ def validate_select(sql: str) -> ValidatedQuery:
             raise SqlValidationError("Cross-database references are not allowed.")
         if not schema and name in _visible_ctes(table):
             continue  # resolves to a CTE that is in scope at this point
-        if schema and schema != ANALYTICS_SCHEMA:
+        if schema and schema != scope.schema:
             raise SqlValidationError(
-                f"Schema '{schema}' is not accessible. Only the '{ANALYTICS_SCHEMA}' schema can "
+                f"Schema '{schema}' is not accessible. Only the '{scope.schema}' schema can "
                 "be queried."
             )
-        if name not in ANALYTICS_TABLES:
+        if name not in scope.tables:
             raise SqlValidationError(
                 f"Unknown table '{name}' (a CTE can only reference CTEs defined before it). "
-                f"Available tables: {', '.join(sorted(ANALYTICS_TABLES))}."
+                f"Available tables: {', '.join(sorted(scope.tables))}."
             )
         referenced.add(name)
 
