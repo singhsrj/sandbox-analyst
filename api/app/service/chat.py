@@ -39,9 +39,11 @@ from app.agent.outputs import collect_outputs, missing_file_claims, unverified_f
 from app.agent.usage import BudgetExceeded, StepLimitExceeded, UsageTracker
 from app.artifacts import ArtifactStore
 from app.config import ApprovalMode, ModelProvider, Settings
+from app.datasources.base import DataSource
 from app.db.app_store import AppStore, ThreadInfo
 from app.observability import finalize_trace, make_handler
 from app.sandbox.manager import SandboxManager
+from app.service.connections import ConnectionsDisabled, ConnectionService
 from app.service.errors import describe_run_error
 from app.streaming.adapter import Chunk, UIStreamAdapter, coalesce
 
@@ -70,6 +72,10 @@ class NothingToApprove(ApprovalMismatch):
     """Approval answers were sent, but the thread is not waiting for any."""
 
 
+class DataSourceMismatch(RuntimeError):
+    """The request names a different data source than the one the thread was started with."""
+
+
 _STRICTNESS: dict[ApprovalMode, int] = {"off": 0, "normal": 1, "strict": 2}
 
 
@@ -91,6 +97,7 @@ class PreparedTurn:
     timezone: str = DEFAULT_TIMEZONE  # the client's IANA timezone, for the current_datetime tool
     resume: dict[str, Any] | None = None  # LangGraph resume values, keyed by interrupt id
     decisions: list[dict[str, Any]] = field(default_factory=list)  # what the reviewer decided
+    source: DataSource | None = None  # None = the sample data
 
 
 def artifact_url(thread_id: str, name: str) -> str:
@@ -104,11 +111,13 @@ class ChatService:
         store: AppStore,
         sandboxes: SandboxManager,
         checkpointer: BaseCheckpointSaver[Any] | None,
+        connections: ConnectionService | None = None,
     ) -> None:
         self._settings = settings
         self._store = store
         self._sandboxes = sandboxes
         self._checkpointer = checkpointer
+        self._connections = connections
         self._locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
         self._active = 0
 
@@ -126,13 +135,25 @@ class ChatService:
         model: str | None = None,
         approval_mode: ApprovalMode | None = None,
         timezone: str | None = None,
+        connection_id: str | None = None,
     ) -> PreparedTurn:
         """Validate and register a new question.
 
-        Raises ThreadNotFound / ThreadBusy / ServerBusy / BudgetExhausted / ApprovalPending.
+        `connection_id` picks the data source when the thread is created (None = the sample);
+        an existing thread keeps its own, and naming a different one is an error.
+
+        Raises ThreadNotFound / ThreadBusy / ServerBusy / BudgetExhausted / ApprovalPending /
+        DataSourceMismatch / ConnectionNotFound / ConnectionUnusable / ConnectionsDisabled.
         """
         await self._preflight(thread_id, owner_id)
-        thread = await self._store.ensure_thread(thread_id, owner_id, question)
+        # The connection is checked (owned, usable, still read-only) BEFORE the thread is created,
+        # so a thread can never be bound to someone else's connection.
+        source = await self._open_source(owner_id, connection_id) if connection_id else None
+        thread = await self._store.ensure_thread(thread_id, owner_id, question, connection_id)
+        if connection_id is not None and thread.connection_id != connection_id:
+            raise DataSourceMismatch(thread_id)
+        if source is None and thread.connection_id is not None:
+            source = await self._open_source(owner_id, thread.connection_id)
         last = await self._store.last_run(thread_id)
         if last is not None and last["status"] == AWAITING_APPROVAL:
             raise ApprovalPending(thread_id)
@@ -144,6 +165,7 @@ class ChatService:
             model=model or self._settings.model,
             approval_mode=effective_approval_mode(self._settings.approval_mode, approval_mode),
             timezone=normalize_timezone(timezone),
+            source=source,
         )
 
     async def prepare_resume(
@@ -163,6 +185,11 @@ class ChatService:
         summary = last["summary"] or {}
         pending = [PendingApproval.from_dict(p) for p in summary.get("pending_approvals", [])]
         resume, decisions = resume_payload(answers, pending)
+        source = (
+            await self._open_source(owner_id, thread.connection_id)
+            if thread.connection_id
+            else None
+        )
         return PreparedTurn(
             thread=thread,
             owner_id=owner_id,
@@ -173,7 +200,13 @@ class ChatService:
             timezone=normalize_timezone(summary.get("timezone")),
             resume=resume,
             decisions=decisions,
+            source=source,
         )
+
+    async def _open_source(self, owner_id: str, connection_id: str) -> DataSource:
+        if self._connections is None or not self._connections.enabled:
+            raise ConnectionsDisabled()
+        return await self._connections.open_source(owner_id, connection_id)
 
     async def _preflight(self, thread_id: str, owner_id: str) -> None:
         settings = self._settings
@@ -228,7 +261,9 @@ class ChatService:
             max_cost_usd=settings.max_cost_usd_per_request,
             max_llm_calls=settings.max_agent_steps,
         )
-        handler = make_handler(settings)
+        # A user's own data is only sent to Langfuse when the operator explicitly allows it.
+        private_data = turn.source is not None and not settings.trace_user_connections
+        handler = None if private_data else make_handler(settings)
         driver: AgentDriver | None = None
         interrupted: BaseException | None = None
         resuming = turn.resume is not None
@@ -263,6 +298,7 @@ class ChatService:
                 known_sandbox_id=turn.thread.sandbox_id,
                 approval_mode=turn.approval_mode,
                 timezone=turn.timezone,
+                source=turn.source,
             )
             sandbox_id = self._sandboxes.sandbox_id(thread_id)
             if sandbox_id and sandbox_id != turn.thread.sandbox_id:
@@ -358,6 +394,7 @@ class ChatService:
             "sql_queries": len(sql_log),
             "approval_mode": turn.approval_mode,
             "timezone": turn.timezone,
+            "data_source": turn.thread.connection_id or "sample",
         }
         # A run whose approval request already reached the browser is paused, even if the browser
         # went away before the run finished saving (found live: a reload right after the card

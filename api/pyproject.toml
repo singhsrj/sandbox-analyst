@@ -4,6 +4,8 @@ version = "0.1.0"
 description = "FastAPI backend and Deep Agent for SandboxAnalyst"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    "certifi>=2025.1.31",
+    "cryptography>=45",
     "deepagents>=0.6.12",
     "fastapi>=0.162.0",
     "langchain-e2b>=0.0.6",

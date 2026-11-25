@@ -65,24 +65,38 @@ def _connect(settings: Settings) -> Any:
 
 async def run_readonly(query: ValidatedQuery, settings: Settings) -> QueryResult:
     """Execute a validated query. Raises psycopg errors (e.g. QueryCanceled on timeout)."""
-    cap = settings.sql_max_rows
     async with await _connect(settings) as conn:
-        try:
-            await conn.execute("SET TRANSACTION READ ONLY")
-            await conn.execute(
-                pgsql.SQL("SET LOCAL statement_timeout = {}").format(
-                    pgsql.Literal(f"{int(settings.sql_statement_timeout_ms)}ms")
-                )
+        return await execute_readonly(
+            conn,
+            query,
+            cap=settings.sql_max_rows,
+            timeout_ms=settings.sql_statement_timeout_ms,
+            schema="analytics",
+        )
+
+
+async def execute_readonly(
+    conn: Any, query: ValidatedQuery, *, cap: int, timeout_ms: int, schema: str
+) -> QueryResult:
+    """Run a validated query on an open, non-autocommit connection: one READ ONLY transaction,
+    `SET LOCAL` settings only, rows capped through a server-side cursor, always rolled back.
+    Shared by the sample database and users' own Postgres databases."""
+    try:
+        await conn.execute("SET TRANSACTION READ ONLY")
+        await conn.execute(
+            pgsql.SQL("SET LOCAL statement_timeout = {}").format(
+                pgsql.Literal(f"{int(timeout_ms)}ms")
             )
-            await conn.execute("SET LOCAL search_path = analytics")
-            async with conn.cursor(name="analyst_query") as cur:
-                await cur.execute(query.sql)
-                fetched = await cur.fetchmany(cap + 1)
-                description = cur.description or []
-            names = [col.name for col in description]
-            dtypes = [_type_name(conn, col.type_code) for col in description]
-        finally:
-            await conn.rollback()
+        )
+        await conn.execute(pgsql.SQL("SET LOCAL search_path = {}").format(pgsql.Identifier(schema)))
+        async with conn.cursor(name="analyst_query") as cur:
+            await cur.execute(query.sql)
+            fetched = await cur.fetchmany(cap + 1)
+            description = cur.description or []
+        names = [col.name for col in description]
+        dtypes = [_type_name(conn, col.type_code) for col in description]
+    finally:
+        await conn.rollback()
     return QueryResult(
         columns=names,
         dtypes=dtypes,

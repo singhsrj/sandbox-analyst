@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -14,6 +15,7 @@ from langgraph.types import Command, Interrupt
 
 from app.db.app_store import ThreadInfo, ThreadNotFound, UserInfo
 from app.db.app_store import _title as make_title
+from app.db.connection_store import ConnectionNotFound, ConnectionRecord
 
 FIXTURE = Path(__file__).parent / "fixtures" / "stream_simple.jsonl"
 
@@ -151,6 +153,8 @@ class FakeStore:
     # Clerk id -> [our user id, live access]. Our id equals the Clerk id here, to keep tests readable.
     users: dict[str, list[Any]] = field(default_factory=dict)
     suggestions: list[str] = field(default_factory=list)
+    # Connection ids in the recycle bin: their threads are hidden, as in AppStore.
+    trashed_connections: set[str] = field(default_factory=set)
 
     async def user_for(self, provider: str, provider_sub: str) -> UserInfo:
         row = self.users.setdefault(provider_sub, [provider_sub, False])
@@ -164,27 +168,49 @@ class FakeStore:
     async def add_suggestion(self, body: str) -> None:
         self.suggestions.append(body)
 
-    async def ensure_thread(self, thread_id: str, owner_id: str, question: str) -> ThreadInfo:
-        row = self.threads.setdefault(thread_id, {"owner": owner_id, "title": make_title(question)})
-        if row["owner"] != owner_id:
+    async def ensure_thread(
+        self, thread_id: str, owner_id: str, question: str, connection_id: str | None = None
+    ) -> ThreadInfo:
+        row = self.threads.setdefault(
+            thread_id,
+            {"owner": owner_id, "title": make_title(question), "connection_id": connection_id},
+        )
+        if row["owner"] != owner_id or not self._visible(thread_id):
             raise ThreadNotFound(thread_id)
         return self._info(thread_id)
+
+    def _visible(self, thread_id: str) -> bool:
+        return self.threads[thread_id].get("connection_id") not in self.trashed_connections
 
     def _info(self, thread_id: str) -> ThreadInfo:
         from datetime import UTC, datetime
 
         now = datetime.now(UTC)
+        row = self.threads[thread_id]
         return ThreadInfo(
-            thread_id, self.threads[thread_id]["title"], self.sandbox_ids.get(thread_id), now, now
+            thread_id,
+            row["title"],
+            self.sandbox_ids.get(thread_id),
+            now,
+            now,
+            row.get("connection_id"),
         )
 
     async def get_thread(self, thread_id: str, owner_id: str) -> ThreadInfo:
-        if thread_id not in self.threads or self.threads[thread_id]["owner"] != owner_id:
+        if (
+            thread_id not in self.threads
+            or self.threads[thread_id]["owner"] != owner_id
+            or not self._visible(thread_id)
+        ):
             raise ThreadNotFound(thread_id)
         return self._info(thread_id)
 
     async def list_threads(self, owner_id: str, limit: int = 50) -> list[ThreadInfo]:
-        return [self._info(t) for t, r in self.threads.items() if r["owner"] == owner_id]
+        return [
+            self._info(t)
+            for t, r in self.threads.items()
+            if r["owner"] == owner_id and self._visible(t)
+        ]
 
     async def set_sandbox_id(self, thread_id: str, sandbox_id: str) -> None:
         self.sandbox_ids[thread_id] = sandbox_id
@@ -224,3 +250,100 @@ class FakeStore:
             for i, r in enumerate(self.runs, 1)
             if r["thread_id"] == thread_id
         ]
+
+
+class FakeConnectionStore:
+    """`ConnectionStore` in memory. Shares the trashed set with a FakeStore when given one, so
+    threads of a trashed connection disappear the same way they do in Postgres."""
+
+    def __init__(self, app_store: FakeStore | None = None) -> None:
+        self.records: dict[str, ConnectionRecord] = {}
+        self.app_store = app_store
+        self.purged: list[str] = []
+        self._own_trash: set[str] = set()
+
+    def _trashed(self) -> set[str]:
+        return self.app_store.trashed_connections if self.app_store else self._own_trash
+
+    async def count_active(self, owner_id: str) -> int:
+        return sum(1 for r in self.records.values() if r.owner_id == owner_id and not r.deleted_at)
+
+    async def insert(self, record: ConnectionRecord) -> None:
+        self.records[record.connection_id] = record
+
+    async def list_for(self, owner_id: str) -> list[ConnectionRecord]:
+        return [r for r in self.records.values() if r.owner_id == owner_id]
+
+    async def get(
+        self, connection_id: str, owner_id: str, *, include_trashed: bool = False
+    ) -> ConnectionRecord:
+        record = self.records.get(connection_id)
+        if record is None or record.owner_id != owner_id:
+            raise ConnectionNotFound(connection_id)
+        if record.deleted_at is not None and not include_trashed:
+            raise ConnectionNotFound(connection_id)
+        return record
+
+    async def update_details(
+        self, connection_id: str, owner_id: str, *, name: str | None, notes: str | None
+    ) -> None:
+        record = await self.get(connection_id, owner_id)
+        self.records[connection_id] = replace(
+            record,
+            name=name if name is not None else record.name,
+            notes=notes if notes is not None else record.notes,
+        )
+
+    async def update_inspection(
+        self,
+        connection_id: str,
+        owner_id: str,
+        *,
+        checks: list[dict[str, Any]],
+        catalog: dict[str, Any] | None,
+        secret: tuple[bytes, str] | None = None,
+    ) -> None:
+        record = await self.get(connection_id, owner_id)
+        changes: dict[str, Any] = {"checks": checks}
+        if catalog is not None:
+            changes["catalog"] = catalog
+        if secret is not None:
+            changes["secret_ciphertext"], changes["key_id"] = secret
+        self.records[connection_id] = replace(record, **changes)
+
+    def _thread_ids(self, connection_id: str) -> list[str]:
+        if self.app_store is None:
+            return []
+        return [
+            t for t, r in self.app_store.threads.items() if r.get("connection_id") == connection_id
+        ]
+
+    async def trash(self, connection_id: str, owner_id: str) -> list[str]:
+        record = await self.get(connection_id, owner_id)
+        self.records[connection_id] = replace(record, deleted_at=datetime.now(UTC))
+        self._trashed().add(connection_id)
+        return self._thread_ids(connection_id)
+
+    async def restore(self, connection_id: str, owner_id: str, trash_days: int) -> None:
+        record = await self.get(connection_id, owner_id, include_trashed=True)
+        cutoff = datetime.now(UTC) - timedelta(days=trash_days)
+        if record.deleted_at is None or record.deleted_at <= cutoff:
+            raise ConnectionNotFound(connection_id)
+        self.records[connection_id] = replace(record, deleted_at=None)
+        self._trashed().discard(connection_id)
+
+    async def expired(self, trash_days: int) -> list[tuple[str, list[str]]]:
+        cutoff = datetime.now(UTC) - timedelta(days=trash_days)
+        return [
+            (cid, self._thread_ids(cid))
+            for cid, r in self.records.items()
+            if r.deleted_at is not None and r.deleted_at <= cutoff
+        ]
+
+    async def purge(self, connection_id: str) -> None:
+        threads = self._thread_ids(connection_id)
+        self.records.pop(connection_id, None)
+        self.purged.append(connection_id)
+        if self.app_store is not None:
+            for thread_id in threads:
+                del self.app_store.threads[thread_id]

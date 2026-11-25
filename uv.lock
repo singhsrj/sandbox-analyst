@@ -1636,6 +1636,8 @@ name = "sandbox-analyst-api"
 version = "0.1.0"
 source = { editable = "api" }
 dependencies = [
+    { name = "certifi" },
+    { name = "cryptography" },
     { name = "deepagents" },
     { name = "fastapi" },
     { name = "langchain-e2b" },
@@ -1653,6 +1655,8 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "certifi", specifier = ">=2025.1.31" },
+    { name = "cryptography", specifier = ">=45" },
     { name = "deepagents", specifier = ">=0.6.12" },
     { name = "fastapi", specifier = ">=0.162.0" },
     { name = "langchain-e2b", specifier = ">=0.0.6" },

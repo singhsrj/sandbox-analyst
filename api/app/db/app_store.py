@@ -20,7 +20,8 @@ from app.config import Settings
 
 
 class ThreadNotFound(LookupError):
-    """No such thread for this owner (also raised when it belongs to someone else)."""
+    """No such thread for this owner (also raised when it belongs to someone else, or when its
+    database connection is in the recycle bin)."""
 
 
 @dataclass(frozen=True)
@@ -30,11 +31,13 @@ class ThreadInfo:
     sandbox_id: str | None
     created_at: datetime
     updated_at: datetime
+    connection_id: str | None = None  # None = the sample data
 
     def as_dict(self) -> dict[str, Any]:
         return {
             "thread_id": self.thread_id,
             "title": self.title,
+            "connection_id": self.connection_id,
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
         }
@@ -67,6 +70,15 @@ def make_pool(settings: Settings) -> AsyncConnectionPool[Any]:
     )
 
 
+# Threads whose connection is in the recycle bin are hidden everywhere, as if deleted.
+_THREAD_COLUMNS = (
+    "SELECT t.thread_id, t.title, t.sandbox_id, t.created_at, t.updated_at, "
+    "t.connection_id::text AS connection_id FROM app.threads t "
+    "LEFT JOIN app.connections c ON c.connection_id = t.connection_id "
+)
+_VISIBLE = "c.deleted_at IS NULL"
+
+
 def _title(question: str) -> str:
     one_line = " ".join(question.split())
     return one_line if len(one_line) <= 80 else one_line[:79] + "…"
@@ -76,17 +88,22 @@ class AppStore:
     def __init__(self, pool: AsyncConnectionPool[Any]) -> None:
         self._pool = pool
 
-    async def ensure_thread(self, thread_id: str, owner_id: str, question: str) -> ThreadInfo:
-        """Create the thread for this owner, or return it. Someone else's thread -> not found."""
+    async def ensure_thread(
+        self, thread_id: str, owner_id: str, question: str, connection_id: str | None = None
+    ) -> ThreadInfo:
+        """Create the thread for this owner, or return it. Someone else's thread -> not found.
+
+        `connection_id` is only used when the thread is created (the caller has already checked
+        that the connection belongs to this owner); an existing thread keeps its own.
+        """
         async with self._pool.connection() as conn:
             await conn.execute(
-                "INSERT INTO app.threads (thread_id, owner_id, title) VALUES (%s, %s, %s) "
-                "ON CONFLICT (thread_id) DO NOTHING",
-                (thread_id, owner_id, _title(question)),
+                "INSERT INTO app.threads (thread_id, owner_id, title, connection_id) "
+                "VALUES (%s, %s, %s, %s) ON CONFLICT (thread_id) DO NOTHING",
+                (thread_id, owner_id, _title(question), connection_id),
             )
             cur = await conn.execute(
-                "SELECT thread_id, title, sandbox_id, created_at, updated_at FROM app.threads "
-                "WHERE thread_id = %s AND owner_id = %s",
+                _THREAD_COLUMNS + f"WHERE t.thread_id = %s AND t.owner_id = %s AND {_VISIBLE}",
                 (thread_id, owner_id),
             )
             row = cast(dict[str, Any] | None, await cur.fetchone())
@@ -97,8 +114,7 @@ class AppStore:
     async def get_thread(self, thread_id: str, owner_id: str) -> ThreadInfo:
         async with self._pool.connection() as conn:
             cur = await conn.execute(
-                "SELECT thread_id, title, sandbox_id, created_at, updated_at FROM app.threads "
-                "WHERE thread_id = %s AND owner_id = %s",
+                _THREAD_COLUMNS + f"WHERE t.thread_id = %s AND t.owner_id = %s AND {_VISIBLE}",
                 (thread_id, owner_id),
             )
             row = cast(dict[str, Any] | None, await cur.fetchone())
@@ -109,8 +125,8 @@ class AppStore:
     async def list_threads(self, owner_id: str, limit: int = 50) -> list[ThreadInfo]:
         async with self._pool.connection() as conn:
             cur = await conn.execute(
-                "SELECT thread_id, title, sandbox_id, created_at, updated_at FROM app.threads "
-                "WHERE owner_id = %s ORDER BY updated_at DESC LIMIT %s",
+                _THREAD_COLUMNS
+                + f"WHERE t.owner_id = %s AND {_VISIBLE} ORDER BY t.updated_at DESC LIMIT %s",
                 (owner_id, limit),
             )
             return [ThreadInfo(**row) for row in cast(list[dict[str, Any]], await cur.fetchall())]
@@ -125,7 +141,9 @@ class AppStore:
     async def delete_thread(self, thread_id: str, owner_id: str) -> bool:
         async with self._pool.connection() as conn:
             cur = await conn.execute(
-                "DELETE FROM app.threads WHERE thread_id = %s AND owner_id = %s",
+                "DELETE FROM app.threads t WHERE t.thread_id = %s AND t.owner_id = %s AND NOT "
+                "EXISTS (SELECT 1 FROM app.connections c WHERE c.connection_id = t.connection_id "
+                "AND c.deleted_at IS NOT NULL)",
                 (thread_id, owner_id),
             )
             return bool(cur.rowcount > 0)

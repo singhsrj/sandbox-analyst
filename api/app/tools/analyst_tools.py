@@ -24,7 +24,8 @@ from langchain_core.tools import BaseTool, tool
 from app.agent.clock import DEFAULT_TIMEZONE, describe_now
 from app.artifacts import ArtifactError, ArtifactStore
 from app.config import Settings
-from app.datasources import DataSource, SampleSource
+from app.datasources import DataSource, SampleSource, Table
+from app.datasources.base import SourceUnavailable
 from app.db.analyst import QueryResult
 from app.sandbox.manager import DATA_DIR, WORKDIR
 from app.security.sql_validator import SqlValidationError, validate_select
@@ -35,7 +36,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _OUTPUT_FILE = re.compile(r"^[A-Za-z0-9_-]{1,60}\.csv$")
-_TABLE_NAME = re.compile(r"^[a-z_]{1,40}$")
+_TABLE_NAME = re.compile(r"^[a-z_][a-z0-9_]{0,62}$")
 
 SandboxProvider = Callable[[], Awaitable["SafeAsyncE2BSandbox"]]
 
@@ -76,9 +77,11 @@ def build_tools(ctx: ToolContext) -> list[BaseTool]:
         description. Call this first to see what data exists."""
         catalog = await source.catalog()
         lines = [
-            f"- {t.name} (~{t.approx_rows:,} rows){': ' + t.description if t.description else ''}"
+            f"- {t.name} ({_size(t)}){': ' + t.description if t.description else ''}"
             for t in catalog.tables
         ]
+        if catalog.skipped:
+            lines.append(f"({len(catalog.skipped)} more tables are not available to queries.)")
         return _clip(f"Tables in schema '{catalog.schema}':\n" + "\n".join(lines), limit)
 
     @tool
@@ -98,10 +101,14 @@ def build_tools(ctx: ToolContext) -> list[BaseTool]:
         table = (await source.catalog()).get(name)
         if table is None:
             return unknown
-        sample = await source.run_readonly(
-            validate_select(f"SELECT * FROM {schema}.{name} LIMIT 3", scope),  # noqa: S608 - name is allowlisted
-        )
-        parts = [f"Table {schema}.{name}", "Columns:"]
+        try:
+            sample = await source.run_readonly(
+                validate_select(f"SELECT * FROM {schema}.{name} LIMIT 3", scope),  # noqa: S608 - name is allowlisted
+            )
+        except SourceUnavailable as exc:
+            return f"DATABASE UNAVAILABLE: {exc}"
+        kind = "" if table.kind == "table" else f" ({table.kind})"
+        parts = [f"Table {schema}.{name}{kind}", "Columns:"]
         parts += [
             f"- {c.name} {c.type} {'nullable' if c.nullable else 'NOT NULL'}"
             f"{' -- ' + c.note if c.note else ''}"
@@ -145,6 +152,9 @@ def build_tools(ctx: ToolContext) -> list[BaseTool]:
 
         try:
             result = await source.run_readonly(validated)
+        except SourceUnavailable as exc:
+            entry.update(status="error", error="database unavailable")
+            return f"DATABASE UNAVAILABLE: {exc} Tell the user; do not retry more than once."
         except psycopg.errors.QueryCanceled:
             entry["status"] = "timeout"
             seconds = settings.sql_statement_timeout_ms / 1000
@@ -199,7 +209,26 @@ def build_tools(ctx: ToolContext) -> list[BaseTool]:
         """
         return describe_now(ctx.timezone)
 
-    return [list_tables, describe_table, run_sql, export_artifact, current_datetime]
+    tools: list[BaseTool] = [
+        list_tables,
+        describe_table,
+        run_sql,
+        export_artifact,
+        current_datetime,
+    ]
+    if scope.schema != "analytics":  # the docstrings describe the sample; name the real schema
+        for t in tools:
+            t.description = t.description.replace(
+                "analytics.<table>", f"{scope.schema}.<table>"
+            ).replace("analytics", f"'{scope.schema}'")
+    return tools
+
+
+def _size(table: Table) -> str:
+    if table.approx_rows < 0:
+        return table.kind
+    rows = f"~{table.approx_rows:,} rows"
+    return rows if table.kind == "table" else f"{table.kind}, {rows}"
 
 
 def _summarize(result: QueryResult, path: str, preview_rows: int) -> str:
