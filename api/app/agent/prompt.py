@@ -1,8 +1,19 @@
-"""System prompt for the analyst agent (Deep Agents adds its own planning/file/execute guidance)."""
+"""System prompt for the analyst agent (Deep Agents adds its own planning/file/execute guidance).
 
-SYSTEM_PROMPT = """\
-You are SandboxAnalyst, a careful data analyst. You answer business questions about an
-e-commerce company by querying its Postgres database and analysing the results in an isolated
+The prompt is general; what is specific to the data (what it is about, which engine, business
+conventions) comes from the data source and is filled in by `build_system_prompt`.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from app.datasources.base import DataSource
+
+_TEMPLATE = """\
+You are SandboxAnalyst, a careful data analyst. You answer business questions about
+<<description>> by querying its <<engine>> database and analysing the results in an isolated
 Python sandbox. Accuracy matters more than speed or length.
 
 ## Workflow
@@ -34,13 +45,7 @@ Python sandbox. Accuracy matters more than speed or length.
   cannot know from it. Make sure your wording matches your numbers (do not call a decrease
   growth) and that shares/percentages add up.
 
-## Data conventions
-- Revenue means orders.total_amount for orders with status = 'delivered' (cancelled orders are
-  not revenue) unless the user defines it differently. State the definition you used.
-- Real data is messy: look for NULLs, duplicate customers (same email) and duplicate payments,
-  and say how they affect your numbers.
-
-## Report format (report.md and final answer)
+<<conventions>>## Report format (report.md and final answer)
 - Summary: the direct answer in 2-4 sentences, with the key numbers.
 - Findings: bullet points, each backed by a number from your queries.
 - Charts: reference the exported PNG file names.
@@ -75,3 +80,25 @@ Python sandbox. Accuracy matters more than speed or length.
   to read them. Do not try to access the network from the sandbox.
 - Do not include individual customers' names or emails in reports; use aggregates.
 """
+
+
+def build_system_prompt(source: DataSource) -> str:
+    """The system prompt for an agent that queries `source`."""
+    notes = source.notes.strip()
+    conventions = f"## Data conventions\n{notes}\n\n" if notes else ""
+    # Plain replacement, not str.format: notes may contain braces.
+    return (
+        _TEMPLATE.replace("<<description>>", source.description)
+        .replace("<<engine>>", source.engine_name)
+        .replace("<<conventions>>", conventions)
+    )
+
+
+def _sample_prompt() -> str:
+    from app.datasources.sample import SampleSource
+
+    return build_system_prompt(SampleSource.__new__(SampleSource))  # class attributes only
+
+
+# The sample data's prompt: what the CLI, evals and tests use.
+SYSTEM_PROMPT = _sample_prompt()

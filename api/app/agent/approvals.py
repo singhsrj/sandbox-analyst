@@ -16,11 +16,16 @@ middleware in `batched` mode, whose interrupts do not say which tool call they a
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from app.config import ApprovalMode
-from app.security.sql_risk import assess_query
+from app.security.sql_risk import RiskAssessment, assess_query
+
+# The risk check for the data source a run queries (defaults: the sample data). It must be a pure
+# function of the SQL text, because LangChain re-runs it when a paused run resumes.
+Assess = Callable[[str], RiskAssessment]
 
 if TYPE_CHECKING:
     from langchain.agents.middleware import HumanInTheLoopMiddleware
@@ -35,29 +40,31 @@ def _query_of(args: Any) -> str:
     return str(args.get("query", "")) if isinstance(args, dict) else ""
 
 
-def approval_reason(mode: ApprovalMode, query: str) -> str:
+def approval_reason(mode: ApprovalMode, query: str, assess: Assess = assess_query) -> str:
     """The text shown on the approval card (and kept in the trace)."""
     if mode == "strict":
         return STRICT_REASON
-    reasons = assess_query(query).reasons
+    reasons = assess(query).reasons
     return "Flagged for review: " + "; ".join(reasons) if reasons else "Flagged for review."
 
 
-def approval_middleware(mode: ApprovalMode) -> HumanInTheLoopMiddleware[Any, Any, Any] | None:
+def approval_middleware(
+    mode: ApprovalMode, assess: Assess = assess_query
+) -> HumanInTheLoopMiddleware[Any, Any, Any] | None:
     """The middleware that gates run_sql for this mode, or None when approvals are off."""
     if mode == "off":
         return None
     from langchain.agents.middleware import HumanInTheLoopMiddleware, InterruptOnConfig
 
     def describe(tool_call: Any, state: Any, runtime: Any) -> str:
-        return approval_reason(mode, _query_of(tool_call.get("args")))
+        return approval_reason(mode, _query_of(tool_call.get("args")), assess)
 
     config = InterruptOnConfig(
         allowed_decisions=["approve", "edit", "reject"], description=describe
     )
     if mode == "normal":
         # Deterministic (pure function of the SQL text): LangChain re-runs it on resume.
-        config["when"] = lambda request: assess_query(_query_of(request.tool_call["args"])).flagged
+        config["when"] = lambda request: assess(_query_of(request.tool_call["args"])).flagged
     return HumanInTheLoopMiddleware(interrupt_on={GATED_TOOL: config}, interrupt_mode="per_call")
 
 

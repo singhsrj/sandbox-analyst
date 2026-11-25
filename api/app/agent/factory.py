@@ -11,9 +11,10 @@ from langgraph.checkpoint.memory import InMemorySaver
 from app.agent.approvals import approval_middleware
 from app.agent.clock import DEFAULT_TIMEZONE, normalize_timezone
 from app.agent.models import get_model
-from app.agent.prompt import SYSTEM_PROMPT
+from app.agent.prompt import build_system_prompt
 from app.artifacts import ArtifactStore
 from app.config import ApprovalMode, Settings
+from app.datasources import DataSource, SampleSource, risk_check
 from app.sandbox.manager import SandboxManager
 from app.tools.analyst_tools import ToolContext, build_tools
 
@@ -33,16 +34,19 @@ async def build_agent(
     known_sandbox_id: str | None = None,
     approval_mode: ApprovalMode = "off",
     timezone: str = DEFAULT_TIMEZONE,
+    source: DataSource | None = None,
 ) -> Any:
     """Return a compiled agent bound to this thread's sandbox.
 
     The sandbox is the agent's backend, so Deep Agents' built-in file tools and `execute` run
-    INSIDE it (never on the host). Our custom tools are the only way to reach the database.
+    INSIDE it (never on the host). Our custom tools are the only way to reach the database,
+    through `source` (default: the sample data).
     """
     # Imported here, not at module level: deepagents pulls in the whole anthropic SDK, which makes
     # importing it cost 15-50 s on a slow disk. The API layer and unit tests should not pay for it.
     from deepagents import create_deep_agent
 
+    source = source or SampleSource(settings)
     sandbox = await sandboxes.get(thread_id, known_sandbox_id=known_sandbox_id)
     ctx = ToolContext(
         settings=settings,
@@ -50,12 +54,13 @@ async def build_agent(
         artifacts=artifacts,
         sql_log=sql_log,
         timezone=normalize_timezone(timezone),
+        source=source,
     )
-    approvals = approval_middleware(approval_mode)
+    approvals = approval_middleware(approval_mode, risk_check(source))
     return create_deep_agent(
         model=model or get_model(settings),
         tools=build_tools(ctx),
-        system_prompt=SYSTEM_PROMPT,
+        system_prompt=build_system_prompt(source),
         middleware=[approvals] if approvals else [],
         subagents=[general_purpose_subagent()],
         backend=sandbox,
