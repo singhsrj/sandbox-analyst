@@ -25,6 +25,7 @@ export interface RunInfo {
   unverified_file_claims: string[];
   approval_mode: ApprovalMode | string;
   timezone: string;
+  data_source?: string; // "sample" or a saved connection's id (older runs: absent)
   usage: {
     llm_calls: number;
     input_tokens: number;

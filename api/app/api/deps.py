@@ -16,6 +16,7 @@ from app.ratelimit import RateLimiter
 from app.replays import ReplayStore
 from app.sandbox.manager import SandboxManager
 from app.service.chat import ChatService
+from app.service.connections import ConnectionService
 
 
 @dataclass
@@ -31,6 +32,10 @@ class Services:
     suggestion_limiter: RateLimiter = field(default_factory=lambda: RateLimiter(5, 3600))  # per IP
     replays: ReplayStore = field(default_factory=lambda: ReplayStore(Path("/nonexistent")))
     users: UserCache = field(default_factory=lambda: UserCache())
+    connections: ConnectionService | None = None  # None = users cannot connect databases
+    # Anything that contacts a user's database (test / save / refresh), per account and per IP.
+    connection_test_limiter: RateLimiter = field(default_factory=lambda: RateLimiter(20, 3600))
+    connection_ip_limiter: RateLimiter = field(default_factory=lambda: RateLimiter(20, 3600))
 
 
 class UserCache:

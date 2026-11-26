@@ -63,6 +63,12 @@ def main() -> None:
 
     settings = get_settings()
     with psycopg.connect(settings.secret("app_database_url"), row_factory=dict_row) as conn:
+        thread = conn.execute(
+            "SELECT connection_id FROM app.threads WHERE thread_id = %s", (args.thread,)
+        ).fetchone()
+        if thread is not None and thread["connection_id"] is not None:
+            # Replays are public. A conversation about someone's own database never is.
+            raise SystemExit("this thread queried a user's own database; it cannot be a replay")
         rows = conn.execute(
             "SELECT run_id, question, status, model, final_answer, chunks, summary, created_at "
             "FROM app.runs WHERE thread_id = %s ORDER BY created_at",

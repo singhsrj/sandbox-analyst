@@ -37,14 +37,17 @@ from app.artifacts import artifact_path
 from app.auth import code_is_valid
 from app.datasources import SampleSource
 from app.db.app_store import ThreadNotFound
+from app.db.connection_store import ConnectionNotFound
 from app.ratelimit import RateLimiter
 from app.security.sql_validator import MAX_SQL_CHARS
 from app.service.chat import (
     ApprovalPending,
     BudgetExhausted,
+    DataSourceMismatch,
     ServerBusy,
     ThreadBusy,
 )
+from app.service.connections import ConnectionsDisabled, ConnectionUnusable
 from app.streaming.sse import SSE_HEADERS, sse_stream
 
 router = APIRouter(prefix="/api")
@@ -59,6 +62,7 @@ EXAMPLE_QUESTIONS = [
 ]
 
 _THREAD_ID_PATTERN = r"^[A-Za-z0-9_-]{8,64}$"
+UUID_PATTERN = r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
 
 
 # --------------------------------------------------------------------------- models
@@ -104,6 +108,9 @@ class ChatRequest(BaseModel):
     # The browser's IANA timezone ("Asia/Kolkata"); unknown values fall back to UTC. A request
     # hint, not part of the identity, so it works the same with or without authentication.
     timezone: str | None = Field(default=None, max_length=64)
+    # The data source for a NEW thread (a saved connection's id); absent = the sample data. An
+    # existing thread keeps the source it started with.
+    connection_id: str | None = Field(default=None, pattern=UUID_PATTERN)
     # Present = this request resumes a run paused for approval (no new question).
     approvals: list[ApprovalIn] | None = Field(default=None, min_length=1, max_length=20)
 
@@ -274,9 +281,23 @@ async def chat(
                 model=body.model,
                 approval_mode=body.approval_mode,
                 timezone=body.timezone,
+                connection_id=body.connection_id,
             )
     except ThreadNotFound as exc:
         raise HTTPException(status_code=404, detail="Thread not found.") from exc
+    except ConnectionNotFound as exc:
+        raise HTTPException(status_code=404, detail="Data source not found.") from exc
+    except ConnectionsDisabled as exc:
+        raise HTTPException(
+            status_code=503, detail="Connecting your own database is not enabled on this server."
+        ) from exc
+    except ConnectionUnusable as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except DataSourceMismatch as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="This conversation uses a different data source. Start a new conversation.",
+        ) from exc
     except ThreadBusy as exc:
         raise HTTPException(status_code=409, detail="This thread is still answering.") from exc
     except ApprovalPending as exc:

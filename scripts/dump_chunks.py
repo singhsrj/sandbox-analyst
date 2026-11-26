@@ -42,6 +42,7 @@ RUN_DATA = {
     "sql_queries": 1,
     "approval_mode": "normal",
     "timezone": "UTC",
+    "data_source": "sample",
 }
 
 

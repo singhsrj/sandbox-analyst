@@ -13,7 +13,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Literal
 
-from pydantic import AliasChoices, Field, SecretStr, field_validator
+from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -110,6 +110,26 @@ class Settings(BaseSettings):
 
     # --- human approval (ADR-022) ---
     approval_mode: ApprovalMode = "normal"
+
+    # --- users' own databases ---
+    # 32 random bytes, base64url (python -c "import secrets,base64;print(base64.urlsafe_b64encode(
+    # secrets.token_bytes(32)).decode())"). Encrypts saved database passwords. Unset = the feature
+    # is off. Losing it makes every saved connection unusable (they must be re-entered).
+    connection_encryption_key: SecretStr | None = None
+    max_connections_per_owner: int = Field(default=5, ge=1, le=50)
+    connection_tests_per_hour: int = Field(default=20, ge=1)  # per account and per IP
+    connection_trash_days: int = Field(default=7, ge=1, le=90)  # recycle bin, then purged
+    # Lets connections reach private/loopback addresses: for local testing against a database in
+    # Docker. Refused when APP_ENV=prod (it would let users reach our own network).
+    allow_private_connection_hosts: bool = False
+    # Runs on a user's database send their query previews to Langfuse only when this is true.
+    trace_user_connections: bool = False
+
+    @model_validator(mode="after")
+    def _no_private_hosts_in_prod(self) -> Settings:
+        if self.app_env == "prod" and self.allow_private_connection_hosts:
+            raise ValueError("ALLOW_PRIVATE_CONNECTION_HOSTS must not be set in production")
+        return self
 
     @property
     def authorized_parties(self) -> list[str]:
